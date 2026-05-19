@@ -3,8 +3,8 @@ loader: &loader obj
 
 train_dataset:
   shuffle: True
-  batch_size: 64
-  num_workers: 4
+  batch_size: 32
+  num_workers: 8
   datapath:
     input_dataset_dir: ./dataset_train
     use_prob: True

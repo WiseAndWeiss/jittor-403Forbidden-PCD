@@ -26,6 +26,10 @@ class VelocityModule(ModelSpec):
         
         # score-matching
         self.dsm_sigma = cfg['dsm_sigma']
+
+        # auxiliary CD loss
+        self.cd_loss_weight = cfg.get('cd_loss_weight', 0.1)
+        self.num_cd_points = cfg.get('num_cd_points', 200)
         
         # networks
         self.encoder = FeatureExtraction(
@@ -70,11 +74,29 @@ class VelocityModule(ModelSpec):
             noise_level=nl,
         ).reshape(B, len(pnt_idx), d)
 
-        loss = (((pred_dir - grad_dir_t_target) ** 2.0) / self.dsm_sigma).sum(dim=-1).mean()
+        mse_loss = (((pred_dir - grad_dir_t_target) ** 2.0) / self.dsm_sigma).sum(dim=-1).mean()
 
-        return loss
+        pc_pred = pc_mix + pred_dir
 
-    def denoise_langevin_dynamics(self, pcl_noisy, num_steps: int=8):
+        cd_idx = get_random_indices(len(pnt_idx), self.num_cd_points)
+        pc_pred_cd = pc_pred[:, cd_idx, :]
+        pc_clean_cd = pc_clean[:, cd_idx, :]
+
+        cd_loss = self._compute_cd(pc_pred_cd, pc_clean_cd)
+
+        loss = mse_loss + self.cd_loss_weight * cd_loss
+
+        return loss, mse_loss, cd_loss
+
+    def _compute_cd(self, pc_a, pc_b):
+        B, M, _ = pc_a.shape
+        diff = pc_a.unsqueeze(2) - pc_b.unsqueeze(1)
+        dist = (diff ** 2).sum(dim=-1)
+        cd_ab = dist.min(dim=-1)[0].mean()
+        cd_ba = dist.min(dim=-2)[0].mean()
+        return cd_ab + cd_ba
+
+    def denoise_langevin_dynamics(self, pcl_noisy, num_steps: int=20, langevin_noise_std: float=0.001):
         """
         pcl_noisy: (B, N, 3)
         """
@@ -92,7 +114,10 @@ class VelocityModule(ModelSpec):
                     noise_level=nl_est,
                 ).reshape(B, N, d)
 
-                pcl_next = pcl_next + (1.0 / num_steps) * pred_dir
+                step_noise_std = langevin_noise_std * (1.0 - it / max(num_steps, 1))
+                langevin_noise = jt.randn_like(pcl_next) * step_noise_std
+
+                pcl_next = pcl_next + (1.0 / num_steps) * pred_dir + langevin_noise
         return pcl_next, None
     
     def training_step(self, batch: Dict) -> Dict:
@@ -103,13 +128,13 @@ class VelocityModule(ModelSpec):
         noise_level = batch.get('noise_level', None)
         if noise_level is not None:
             noise_level = noise_level.reshape(-1, patch_size, 1)
-        loss = self.get_supervised_loss(
+        loss, mse_loss, cd_loss = self.get_supervised_loss(
             pc_noisy=pc_noisy,
             pc_mix=pc_mix,
             pc_clean=pc_clean,
             noise_level=noise_level,
         )
-        return {"loss": loss}
+        return {"loss": loss, "mse_loss": mse_loss, "cd_loss": cd_loss}
     
     def execute(self, **kwargs) -> Dict: # type: ignore
         return self.training_step(**kwargs)
@@ -119,16 +144,23 @@ class VelocityModule(ModelSpec):
         pc_noisy_batch = batch['pc_noisy']
         assert pc_noisy_batch.ndim == 3
 
+        num_steps = self.model_config.get('predict_num_steps', 20)
+        langevin_std = self.model_config.get('predict_langevin_std', 0.001)
+        patch_size = self.model_config.get('predict_patch_size', 1000)
+
         res = []
         for i, pc_noisy in enumerate(pc_noisy_batch):
             pc_denoised = patch_based_denoise(
                 model=self,
                 pcl_noisy=pc_noisy,
-                patch_size=1000,
+                patch_size=patch_size,
                 seed_k=6,
                 seed_k_alpha=1,
-                num_steps=8,
+                num_steps=num_steps,
+                langevin_noise_std=langevin_std,
             ).detach().numpy()
+
+            pc_denoised = self._smooth_outliers(pc_denoised)
 
             if 'norm_center' in batch and 'norm_scale' in batch:
                 center = batch['norm_center'][i]
@@ -141,6 +173,21 @@ class VelocityModule(ModelSpec):
 
             res.append({"pc_denoised": pc_denoised})
         return res
+
+    @staticmethod
+    def _smooth_outliers(points, k=16, n_sigma=3.0):
+        from scipy.spatial import cKDTree
+        tree = cKDTree(points)
+        _, idx = tree.query(points, k=k + 1)
+        neighbors = points[idx[:, 1:]]
+        neighbor_mean = neighbors.mean(axis=1)
+        dist_to_mean = np.linalg.norm(points - neighbor_mean, axis=1)
+        avg_dist = dist_to_mean.mean()
+        mask = dist_to_mean > n_sigma * avg_dist
+        if mask.sum() > 0:
+            alpha = np.clip(1.0 - (n_sigma * avg_dist) / (dist_to_mean[mask] + 1e-8), 0, 1)
+            points[mask] = points[mask] + alpha[:, None] * (neighbor_mean[mask] - points[mask])
+        return points
     
     def process_fn(self, batch: List[Asset]) -> List[Dict]:
         res = []
@@ -212,7 +259,7 @@ def knn_points(x, y, k):
     nn = jt.stack(nn, dim=0)
     return dist_k, idx, nn
 
-def patch_based_denoise(model: VelocityModule, pcl_noisy, patch_size=1000, seed_k=6, seed_k_alpha=1, num_steps=8) -> jt.Var:
+def patch_based_denoise(model: VelocityModule, pcl_noisy, patch_size=1000, seed_k=6, seed_k_alpha=1, num_steps=20, langevin_noise_std=0.001) -> jt.Var:
     """
     pcl_noisy: (N, 3)
     """
@@ -252,7 +299,7 @@ def patch_based_denoise(model: VelocityModule, pcl_noisy, patch_size=1000, seed_
     while i < num_patches:
         curr = patches[i:i+patch_step]
         try:
-            out, _ = model.denoise_langevin_dynamics(curr, num_steps=num_steps)
+            out, _ = model.denoise_langevin_dynamics(curr, num_steps=num_steps, langevin_noise_std=langevin_noise_std)
         except Exception as e:
             print("Denoise error:", e)
             return None
@@ -268,7 +315,6 @@ def patch_based_denoise(model: VelocityModule, pcl_noisy, patch_size=1000, seed_
         if mask.sum().item() > 0:
             pcl_out.append(patches_denoised[patch_id][mask])
         else:
-            # 该点未被包含在任何一个 Patch 内，保留原始噪声点
             pcl_out.append(pcl_noisy[0, pidx:pidx+1])
     pcl_out = jt.concat(pcl_out, dim=0)
     return pcl_out
