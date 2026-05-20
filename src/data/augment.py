@@ -173,8 +173,7 @@ class AugmentPatch(Augment):
         pat_B = pc[nn_idx]        # (P, M, 3)
 
         l1, l2 = 0.0, 1.0
-        t = np.random.beta(0.4, 1.0, size=(self.num_patches, self.patch_size, 1))
-        t = (l2 - l1) * t + l1
+        t = np.random.uniform(l1, l2, size=(self.num_patches, self.patch_size, 1))
         
         pat_t = t * pat_B + (1 - t) * pat_A
         seed_points_t = pc_noisy[seed_idx][:, None, :]
