@@ -1,0 +1,14 @@
+mode: predict
+debug: False
+load_ckpt: experiments/vm/checkpoint_33.pkl
+
+components:
+  data: test_predict
+  transform: vm
+  system: vm
+  model: vm
+
+writer:
+  __target__: vm
+  save_dir: result
+  save_name: denoised
