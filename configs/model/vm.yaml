@@ -1,10 +1,11 @@
 __target__: VelocityModule
 frame_knn: 32
 num_train_points: 1024
-feat_embedding_dim: 256
-decoder_hidden_dim: 64
+feat_embedding_dim: 512
+decoder_hidden_dim: 128
 dsm_sigma: 0.05
 cd_loss_weight: 0.0
-predict_num_steps: 8
+num_cd_points: 1024
+predict_num_steps: 1
 predict_langevin_std: 0.0
 predict_patch_size: 2048

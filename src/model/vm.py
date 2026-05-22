@@ -10,7 +10,7 @@ from .spec import ModelSpec
 from ..data.asset import Asset
 
 def get_random_indices(n, m):
-    assert m < n
+    assert m <= n
     idx = np.random.permutation(n)[:m]
     return jt.array(idx).int32()
 
@@ -101,6 +101,11 @@ class VelocityModule(ModelSpec):
         pcl_noisy: (B, N, 3)
         """
         B, N, d = pcl_noisy.shape
+
+        _cos = [np.cos(np.pi * t / (2 * num_steps)) for t in range(num_steps)]
+        _sum = sum(_cos)
+        step_scales = [c / _sum for c in _cos]
+
         with jt.no_grad():
             pcl_next = pcl_noisy.clone()
             for it in range(num_steps):
@@ -117,7 +122,7 @@ class VelocityModule(ModelSpec):
                 step_noise_std = langevin_noise_std * (1.0 - it / max(num_steps, 1))
                 langevin_noise = jt.randn_like(pcl_next) * step_noise_std
 
-                pcl_next = pcl_next + (1.0 / num_steps) * pred_dir + langevin_noise
+                pcl_next = pcl_next + step_scales[it] * pred_dir + langevin_noise
         return pcl_next, None
     
     def training_step(self, batch: Dict) -> Dict:
