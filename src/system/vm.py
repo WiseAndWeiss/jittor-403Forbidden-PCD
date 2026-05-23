@@ -16,11 +16,21 @@ class VMWriter(DummyWriter):
         self.output_format = output_format
     
     def write(self, batch, prediction: List[Dict], dataset_module=None):
-        pc_noisy_batch = batch['pc_noisy']
         for i, asset in enumerate(batch['asset']):
             path = asset.path
             assert path is not None, "asset path is None"
-            dirname = os.path.join(self.save_dir, os.path.dirname(path))
+            if dataset_module is not None and dataset_module.predict_datapath is not None:
+                abs_path = os.path.abspath(path)
+                for dp in dataset_module.predict_datapath.values():
+                    base = os.path.abspath(dp.input_dataset_dir)
+                    if abs_path.startswith(base + os.sep):
+                        rel_dir = os.path.relpath(os.path.dirname(abs_path), base)
+                        break
+                else:
+                    rel_dir = os.path.dirname(path)
+            else:
+                rel_dir = os.path.dirname(path)
+            dirname = os.path.join(self.save_dir, rel_dir)
             os.makedirs(dirname, exist_ok=True)
             denoised = prediction[i]['pc_denoised']
             if isinstance(denoised, np.ndarray):

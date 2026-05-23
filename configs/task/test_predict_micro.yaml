@@ -1,0 +1,14 @@
+mode: predict
+debug: False
+load_ckpt: experiments/vm/micro_checkpoint_best.pkl
+
+components:
+  data: test_predict_micro
+  transform: micro
+  system: vm
+  model: vm
+
+writer:
+  __target__: vm
+  save_dir: result_fine
+  save_name: denoised

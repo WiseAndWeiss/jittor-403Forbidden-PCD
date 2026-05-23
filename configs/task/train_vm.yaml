@@ -1,5 +1,6 @@
 mode: train
 debug: False
+load_ckpt: experiments/finetune/checkpoint_9.pkl
 
 components:
   data: train
@@ -11,6 +12,7 @@ loss:
   loss: 1.0
   mse_loss: 0.0
   cd_loss: 0.0
+  smoothness_loss: 0.0
 
 optimizer:
   __target__: adam

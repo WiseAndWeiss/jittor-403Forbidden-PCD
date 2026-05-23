@@ -1,0 +1,25 @@
+mode: train
+debug: False
+load_ckpt: experiments/vm/checkpoint_45.pkl
+
+components:
+  data: train
+  transform: vm
+  system: finetune
+  model: finetune
+
+loss:
+  loss: 1.0
+  mse_loss: 0.0
+  cd_loss: 0.0
+  smoothness_loss: 0.0
+
+optimizer:
+  __target__: adam
+  lr: 0.00005
+  weight_decay: 0.00003
+
+trainer:
+  epochs: 30
+  warmup_epochs: 0
+  log_interval: 20

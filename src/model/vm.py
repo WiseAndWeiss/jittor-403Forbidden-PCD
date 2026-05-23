@@ -30,6 +30,10 @@ class VelocityModule(ModelSpec):
         # auxiliary CD loss
         self.cd_loss_weight = cfg.get('cd_loss_weight', 0.1)
         self.num_cd_points = cfg.get('num_cd_points', 200)
+
+        # smoothness regularization
+        self.smoothness_weight = cfg.get('smoothness_weight', 0.0)
+        self.smoothness_k = cfg.get('smoothness_k', 8)
         
         # networks
         self.encoder = FeatureExtraction(
@@ -76,6 +80,22 @@ class VelocityModule(ModelSpec):
 
         mse_loss = (((pred_dir - grad_dir_t_target) ** 2.0) / self.dsm_sigma).sum(dim=-1).mean()
 
+        if self.smoothness_weight > 0:
+            M = len(pnt_idx)
+            pred_dir_reshaped = pred_dir.reshape(B, M, d)
+            dist = ((pc_mix.unsqueeze(2) - pc_mix.unsqueeze(1)) ** 2).sum(dim=-1)
+            sk = min(self.smoothness_k, M - 1)
+            _, nn_idx = jt.topk(dist, k=sk + 1, dim=-1, largest=False)
+            nn_idx = nn_idx[:, :, 1:]
+            neighbor_disps = []
+            for b in range(B):
+                neighbor_disps.append(pred_dir_reshaped[b][nn_idx[b]])
+            neighbor_disps = jt.stack(neighbor_disps, dim=0)
+            neighbor_mean = neighbor_disps.mean(dim=2)
+            smoothness_loss = ((pred_dir_reshaped - neighbor_mean) ** 2).sum(dim=-1).mean()
+        else:
+            smoothness_loss = jt.array(0.0)
+
         pc_pred = pc_mix + pred_dir
 
         cd_idx = get_random_indices(len(pnt_idx), self.num_cd_points)
@@ -84,9 +104,9 @@ class VelocityModule(ModelSpec):
 
         cd_loss = self._compute_cd(pc_pred_cd, pc_clean_cd)
 
-        loss = mse_loss + self.cd_loss_weight * cd_loss
+        loss = mse_loss + self.smoothness_weight * smoothness_loss + self.cd_loss_weight * cd_loss
 
-        return loss, mse_loss, cd_loss
+        return loss, mse_loss, cd_loss, smoothness_loss
 
     def _compute_cd(self, pc_a, pc_b):
         B, M, _ = pc_a.shape
@@ -133,13 +153,13 @@ class VelocityModule(ModelSpec):
         noise_level = batch.get('noise_level', None)
         if noise_level is not None:
             noise_level = noise_level.reshape(-1, patch_size, 1)
-        loss, mse_loss, cd_loss = self.get_supervised_loss(
+        loss, mse_loss, cd_loss, smoothness_loss = self.get_supervised_loss(
             pc_noisy=pc_noisy,
             pc_mix=pc_mix,
             pc_clean=pc_clean,
             noise_level=noise_level,
         )
-        return {"loss": loss, "mse_loss": mse_loss, "cd_loss": cd_loss}
+        return {"loss": loss, "mse_loss": mse_loss, "cd_loss": cd_loss, "smoothness_loss": smoothness_loss}
     
     def execute(self, **kwargs) -> Dict: # type: ignore
         return self.training_step(**kwargs)
@@ -167,6 +187,10 @@ class VelocityModule(ModelSpec):
 
             pc_denoised = self._smooth_outliers(pc_denoised)
 
+            pca_alpha = self.model_config.get('pca_smooth_alpha', 0.3)
+            if pca_alpha > 0:
+                pc_denoised = self._pca_smooth(pc_denoised, alpha=pca_alpha)
+
             if 'norm_center' in batch and 'norm_scale' in batch:
                 center = batch['norm_center'][i]
                 scale = batch['norm_scale'][i]
@@ -193,6 +217,21 @@ class VelocityModule(ModelSpec):
             alpha = np.clip(1.0 - (n_sigma * avg_dist) / (dist_to_mean[mask] + 1e-8), 0, 1)
             points[mask] = points[mask] + alpha[:, None] * (neighbor_mean[mask] - points[mask])
         return points
+
+    @staticmethod
+    def _pca_smooth(points, k=12, alpha=0.3):
+        from scipy.spatial import cKDTree
+        tree = cKDTree(points)
+        _, idx = tree.query(points, k=k + 1)
+        neighbors = points[idx[:, 1:]]
+        neighbor_mean = neighbors.mean(axis=1)
+        centered = neighbors - neighbor_mean[:, None, :]
+        cov = np.einsum('nki,nkj->nij', centered, centered) / k
+        _, eigenvectors = np.linalg.eigh(cov)
+        normals = eigenvectors[:, :, 0]
+        displacement = neighbor_mean - points
+        normal_component = np.sum(displacement * normals, axis=1, keepdims=True) * normals
+        return points + alpha * normal_component
     
     def process_fn(self, batch: List[Asset]) -> List[Dict]:
         res = []

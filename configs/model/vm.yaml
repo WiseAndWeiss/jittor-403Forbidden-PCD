@@ -6,6 +6,9 @@ decoder_hidden_dim: 128
 dsm_sigma: 0.05
 cd_loss_weight: 0.0
 num_cd_points: 1024
+smoothness_weight: 0.0
+smoothness_k: 8
+pca_smooth_alpha: 0.3
 predict_num_steps: 1
 predict_langevin_std: 0.0
 predict_patch_size: 2048
