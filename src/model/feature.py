@@ -185,6 +185,48 @@ class Decoder(nn.Module):
             net = self.lin_3(net)
         return net
 
+class DecoderStraight(nn.Module):
+
+    def __init__(self, z_dim, dim, out_dim, hidden_size):
+        super().__init__()
+        self.out_dim = out_dim
+        c_dim = z_dim
+        self.lin_1 = nn.Linear(c_dim, c_dim)
+        self.bn_1_out = nn.BatchNorm1d(c_dim)
+
+        self.lin_2 = nn.Linear(c_dim, hidden_size)
+        self.bn_2_out = nn.BatchNorm1d(hidden_size)
+
+        self.lin_3 = nn.Linear(hidden_size, out_dim)
+
+        self.actvn_out = nn.ReLU()
+        self.dropout = nn.Dropout(0.1)
+
+    def execute(self, c, B=None, N=None):
+        net = self.lin_1(c)
+        net = self.bn_1_out(net)
+        net = self.actvn_out(net)
+        net = self.dropout(net)
+
+        net = self.lin_2(net)
+        net = self.bn_2_out(net)
+        net = self.actvn_out(net)
+        net = self.dropout(net)
+
+        if self.out_dim == 1:
+            net = net.reshape(B, N, -1)
+            net = jt.max(net, dim=1, keepdims=True)
+            net = self.lin_3(net)
+            net = jt.sigmoid(net)
+        else:
+            net = self.lin_3(net)
+        return net
+
+class DistanceDecoder(DecoderStraight):
+
+    def __init__(self, z_dim, hidden_size):
+        super().__init__(z_dim, dim=3, out_dim=1, hidden_size=hidden_size)
+
 _knn_proj_cache = {}
 
 def _get_knn_proj(in_dim):

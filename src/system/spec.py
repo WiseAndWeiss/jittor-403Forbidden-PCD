@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from tqdm import tqdm
 
 import jittor as jt
+import numpy as np
 import os
 
 from ..data.asset import Asset
@@ -71,7 +72,7 @@ class DummySystem():
         
         self._validation_loss = defaultdict(list)
     
-    def forward(self, batch, validate: bool=False): # return loss sum
+    def forward(self, batch, validate: bool=False, loss_dict_out=None): # return loss sum
         loss_dict = self.model.training_step(batch)
         assert isinstance(loss_dict, dict), "loss_dict must be a dict containing loss/metrics"
         assert self.loss_config is not None, "do not have loss_confing"
@@ -92,6 +93,8 @@ class DummySystem():
                 if self.loss_config[name] > 0:
                     loss_sum += self.loss_config[name] * loss_dict[name]
             loss_dict['loss_sum'] = loss_sum
+            if loss_dict_out is not None:
+                loss_dict_out.update({k: _get_item(v) for k, v in loss_dict.items()})
             # TODO: log
             # # add train prefix to loss_dict
             # prefixed_loss_dict = {f"train/{k}": v for k, v in loss_dict.items()}
@@ -106,8 +109,8 @@ class DummySystem():
     def on_train_batch_start(self):
         pass
     
-    def training_step(self, batch):
-        return self.forward(batch, validate=False)
+    def training_step(self, batch, loss_dict_out=None):
+        return self.forward(batch, validate=False, loss_dict_out=loss_dict_out)
     
     def on_train_batch_end(self):
         pass
@@ -130,7 +133,18 @@ class DummySystem():
         pass
     
     def on_validation_epoch_end(self):
-        pass
+        if self._validation_loss:
+            keys = [k for k in self._validation_loss if 'loss_sum' in k]
+            if keys:
+                vals = [item for k in keys for item in self._validation_loss[k]]
+                if vals:
+                    print(f"  [val avg loss_sum] {np.mean(vals):.6f}  min={np.min(vals):.6f}  max={np.max(vals):.6f}")
+            for prefix in ['loss_d', 'finetune_loss']:
+                sub_keys = [k for k in self._validation_loss if prefix in k]
+                if sub_keys:
+                    sub_vals = [item for k in sub_keys for item in self._validation_loss[k]]
+                    if sub_vals:
+                        print(f"  [val avg {prefix}] {np.mean(sub_vals):.6f}  min={np.min(sub_vals):.6f}  max={np.max(sub_vals):.6f}")
     
     def on_before_optimizer_step(self, optimizer):
         pass
@@ -160,16 +174,30 @@ class DummySystem():
             train_dataloader = self.dataset_module.train_dataloader()
             assert train_dataloader is not None, "train_dataloader is None"
             pbar = tqdm(train_dataloader, total=len(train_dataloader)//train_dataloader.batch_size) # type: ignore
+            train_losses = []
+            train_sub_losses = {}
             for batch_idx, batch in enumerate(pbar):
                 self.on_train_batch_start()
-                loss = self.training_step(batch)
+                sub_losses = {}
+                loss = self.training_step(batch, loss_dict_out=sub_losses)
                 self.optimizer.zero_grad()
                 self.optimizer.backward(loss)
+                loss_val = _get_item(loss)
+                train_losses.append(loss_val)
+                for k, v in sub_losses.items():
+                    if k not in train_sub_losses:
+                        train_sub_losses[k] = []
+                    train_sub_losses[k].append(v)
                 if batch_idx % self.log_interval == 0:
-                    pbar.set_description(f"Epoch {epoch}, Loss: {_get_item(loss)}")
+                    pbar.set_description(f"Epoch {epoch}, Loss: {loss_val}")
                 self.on_before_optimizer_step(self.optimizer)
                 self.optimizer.step()
-                self.on_train_batch_end()
+            if train_losses:
+                parts = [f"avg={np.mean(train_losses):.6f}"]
+                for k in ['loss_d', 'finetune_loss']:
+                    if k in train_sub_losses and train_sub_losses[k]:
+                        parts.append(f"{k}={np.mean(train_sub_losses[k]):.6f}")
+                print(f"  [train {', '.join(parts)}]")
             self.on_train_epoch_end()
             
             self.model.eval()

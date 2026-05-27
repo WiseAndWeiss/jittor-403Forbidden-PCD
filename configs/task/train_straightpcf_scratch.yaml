@@ -1,0 +1,23 @@
+mode: train
+debug: False
+
+components:
+  data: train
+  transform: vm
+  system: vm_straight
+  model: straightpcf
+
+loss:
+  loss: 1.0
+  loss_d: 0.0
+  finetune_loss: 0.0
+
+optimizer:
+  __target__: adam
+  lr: 0.00005
+  weight_decay: 0.00005
+
+trainer:
+  epochs: 150
+  warmup_epochs: 10
+  log_interval: 20

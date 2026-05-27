@@ -187,9 +187,9 @@ class VelocityModule(ModelSpec):
 
             pc_denoised = self._smooth_outliers(pc_denoised)
 
-            pca_alpha = self.model_config.get('pca_smooth_alpha', 0.3)
-            if pca_alpha > 0:
-                pc_denoised = self._pca_smooth(pc_denoised, alpha=pca_alpha)
+            bilateral_alpha = self.model_config.get('bilateral_smooth_alpha', 1.0)
+            if bilateral_alpha > 0:
+                pc_denoised = self._bilateral_smooth(pc_denoised)
 
             if 'norm_center' in batch and 'norm_scale' in batch:
                 center = batch['norm_center'][i]
@@ -219,19 +219,34 @@ class VelocityModule(ModelSpec):
         return points
 
     @staticmethod
-    def _pca_smooth(points, k=12, alpha=0.3):
+    def _estimate_normals(points, k=24):
         from scipy.spatial import cKDTree
         tree = cKDTree(points)
         _, idx = tree.query(points, k=k + 1)
         neighbors = points[idx[:, 1:]]
-        neighbor_mean = neighbors.mean(axis=1)
-        centered = neighbors - neighbor_mean[:, None, :]
+        centered = neighbors - neighbors.mean(axis=1, keepdims=True)
         cov = np.einsum('nki,nkj->nij', centered, centered) / k
         _, eigenvectors = np.linalg.eigh(cov)
-        normals = eigenvectors[:, :, 0]
-        displacement = neighbor_mean - points
-        normal_component = np.sum(displacement * normals, axis=1, keepdims=True) * normals
-        return points + alpha * normal_component
+        return eigenvectors[:, :, 0]
+
+    @staticmethod
+    def _bilateral_smooth(points, sigma_s=0.03, sigma_c=0.3, k=24):
+        from scipy.spatial import cKDTree
+        normals = VelocityModule._estimate_normals(points, k=k)
+        tree = cKDTree(points)
+        dists, idx = tree.query(points, k=k + 1)
+        neighbor_pts = points[idx[:, 1:]]
+        neighbor_normals = normals[idx[:, 1:]]
+        displacements = neighbor_pts - points[:, None, :]
+        normal_projections = np.sum(displacements * normals[:, None, :], axis=-1)
+        w_s = np.exp(-0.5 * (dists[:, 1:] / sigma_s) ** 2)
+        normal_diffs = neighbor_normals - normals[:, None, :]
+        n_dist = np.sum(normal_diffs ** 2, axis=-1)
+        w_c = np.exp(-0.5 * n_dist / (sigma_c ** 2 + 1e-8))
+        weights = w_s * w_c
+        weight_sum = weights.sum(axis=1, keepdims=True) + 1e-8
+        weighted_proj = (weights * normal_projections).sum(axis=1, keepdims=True) / weight_sum
+        return points + weighted_proj * normals
     
     def process_fn(self, batch: List[Asset]) -> List[Dict]:
         res = []

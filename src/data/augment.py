@@ -144,6 +144,8 @@ class AugmentPatch(Augment):
     num_patches: int
     
     train_cvm_network: bool
+
+    patch_size_jitter: float = 0.0
     
     @classmethod
     def parse(cls, **kwargs) -> 'AugmentPatch':
@@ -167,13 +169,20 @@ class AugmentPatch(Augment):
         seed_points = pc_noisy[seed_idx]                         # (P, 3)
         
         tree = cKDTree(pc_noisy)
-        _, nn_idx = tree.query(seed_points, k=self.patch_size)   # (P, M)
+        if self.patch_size_jitter > 0:
+            lo = int(self.patch_size / (1.0 + self.patch_size_jitter))
+            hi = int(self.patch_size * (1.0 + self.patch_size_jitter))
+            k = np.random.randint(lo, hi + 1)
+        else:
+            k = self.patch_size
+        _, nn_idx = tree.query(seed_points, k=k)   # (P, M)
 
         pat_A = pc_noisy[nn_idx]  # (P, M, 3)
         pat_B = pc[nn_idx]        # (P, M, 3)
 
         l1, l2 = 0.0, 1.0
-        t = np.zeros((self.num_patches, self.patch_size, 1))
+        t_val = np.random.uniform(l1, l2)
+        t = np.full((self.num_patches, self.patch_size, 1), t_val)
         
         pat_t = t * pat_B + (1 - t) * pat_A
         seed_points_t = pc_noisy[seed_idx][:, None, :]
@@ -185,6 +194,7 @@ class AugmentPatch(Augment):
         if asset.meta is None:
             asset.meta = {}
         asset.meta['pc_noisy'] = pat_A
+        asset.meta['pc_noisy_L2'] = pat_A
         asset.meta['pc_clean'] = pat_B
         asset.meta['pc_mix'] = pat_t
         asset.meta['noise_level'] = 1.0 - t

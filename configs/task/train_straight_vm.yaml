@@ -1,0 +1,24 @@
+mode: train
+debug: False
+
+components:
+  data: train
+  transform: vm
+  system: vm
+  model: straight_vm
+
+loss:
+  loss: 1.0
+  mse_loss: 0.0
+  cd_loss: 0.0
+  smoothness_loss: 0.0
+
+optimizer:
+  __target__: adam
+  lr: 0.00006
+  weight_decay: 0.00005
+
+trainer:
+  epochs: 120
+  warmup_epochs: 10
+  log_interval: 20

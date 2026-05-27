@@ -1,0 +1,24 @@
+mode: train
+debug: False
+load_ckpt: experiments/vm_straight/checkpoint_best.pkl
+
+components:
+  data: train
+  transform: vm
+  system: vm_straight
+  model: straightpcf
+
+loss:
+  loss: 1.0
+  loss_d: 0.0
+  finetune_loss: 0.0
+
+optimizer:
+  __target__: adam
+  lr: 0.00003
+  weight_decay: 0.00003
+
+trainer:
+  epochs: 50
+  warmup_epochs: 0
+  log_interval: 20

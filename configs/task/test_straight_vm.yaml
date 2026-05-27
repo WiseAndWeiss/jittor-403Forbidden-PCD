@@ -1,0 +1,14 @@
+mode: predict
+debug: False
+load_ckpt: experiments/vm_straight/checkpoint_92.pkl
+
+components:
+  data: test_predict
+  transform: vm
+  system: vm
+  model: straight_vm
+
+writer:
+  __target__: vm
+  save_dir: result_straight
+  save_name: denoised
