@@ -6,6 +6,7 @@ from tqdm import tqdm
 from typing import Dict, List
 
 import argparse
+import copy
 import numpy as np
 import os
 import random
@@ -22,6 +23,40 @@ def load(task: str, path: str) -> Dict:
     path += '.yaml'
     print(f"\033[92mload {task} config: {path}\033[0m")
     return OmegaConf.to_container(OmegaConf.load(path)) # type: ignore
+
+def init_wandb(task: Dict, args, hparams: Dict):
+    """Start a Weights & Biases run for training, logging all hyperparameters.
+
+    Controlled by an optional `wandb:` block in the task config, e.g.:
+        wandb:
+          enabled: true
+          project: asdn-pcdenoise
+          name: asdn-stage2          # optional run name
+          mode: online               # online | offline | disabled
+    Returns the wandb module (with an active run) or None if disabled/unavailable.
+    """
+    wandb_cfg = task.get('wandb', None) or {}
+    if not wandb_cfg.get('enabled', False):
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("\033[31m[wandb] not installed; skipping logging (pip install wandb)\033[0m")
+        return None
+    try:
+        wandb.init(
+            project=wandb_cfg.get('project', 'asdn-pcdenoise'),
+            name=wandb_cfg.get('name', None),
+            mode=wandb_cfg.get('mode', 'online'),
+            config=hparams,
+        )
+    except Exception as e:
+        # e.g. not logged in / no network. Don't take training down with it.
+        print(f"\033[31m[wandb] init failed ({e}); continuing without logging. "
+              f"Run `wandb login`, or set wandb.mode=offline in the task config.\033[0m")
+        return None
+    print(f"\033[92m[wandb] logging to run '{wandb.run.name}' ({wandb.run.id})\033[0m")
+    return wandb
 
 def debug_fn(data: PCDatasetModule):
     train_dataloader = data.train_dataloader()
@@ -46,6 +81,7 @@ if __name__ == "__main__":
     random.seed(args.seed)
     
     task = load('task', args.task)
+    task_hparams = copy.deepcopy(task)  # preserved for wandb (task dict gets mutated below)
     mode = task['mode']
     assert mode in ['train', 'predict', 'debug', 'validate']
     components = task['components']
@@ -79,10 +115,12 @@ if __name__ == "__main__":
 
     # get model
     model_config = components.get('model', None)
+    model_hparams = None
     if model_config is None:
         model = None
     else:
         model_config = load('model', os.path.join('configs/model', model_config))
+        model_hparams = copy.deepcopy(model_config)  # before get_model pops __target__
         model = get_model(model_config=model_config, transform_config=transform_config)
     
     train_transform = (Transform.parse(**transform_config.get('train_transform', {}))) if model is None else model.get_train_transform()
@@ -132,6 +170,18 @@ if __name__ == "__main__":
         debug_fn(data=dataset_module)
     elif mode == 'train':
         assert system is not None, "system is None, cannot train"
+        init_wandb(task, args, hparams={
+            'seed': args.seed,
+            'task_file': args.task,
+            'components': task_hparams.get('components'),
+            'model': model_hparams,
+            'optimizer': task_hparams.get('optimizer'),
+            'loss': task_hparams.get('loss'),
+            'trainer': task_hparams.get('trainer'),
+            'load_ckpt': task_hparams.get('load_ckpt'),
+            'data': data_config,
+            'transform': transform_config,
+        })
         system.train()
     elif mode == 'predict':
         assert system is not None, "system is None, cannot predict"

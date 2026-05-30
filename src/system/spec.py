@@ -10,6 +10,18 @@ from ..data.asset import Asset
 from ..data.dataset import PCDatasetModule
 from ..model.spec import ModelSpec
 
+try:
+    import wandb
+    _HAS_WANDB = True
+except ImportError:
+    _HAS_WANDB = False
+
+
+def _wandb_log(data: dict, step: Optional[int] = None):
+    """Log to Weights & Biases if a run is active; otherwise a no-op."""
+    if _HAS_WANDB and wandb.run is not None:
+        wandb.log(data, step=step)
+
 def _get_item(x):
     if isinstance(x, jt.Var):
         return x.item()
@@ -68,9 +80,10 @@ class DummySystem():
         else:
             self.optimizer = None
             self.base_lr = 0.001
-        
+
         self._validation_loss = defaultdict(list)
-    
+        self._last_loss_dict = {}
+
     def forward(self, batch, validate: bool=False): # return loss sum
         loss_dict = self.model.training_step(batch)
         assert isinstance(loss_dict, dict), "loss_dict must be a dict containing loss/metrics"
@@ -92,6 +105,8 @@ class DummySystem():
                 if self.loss_config[name] > 0:
                     loss_sum += self.loss_config[name] * loss_dict[name]
             loss_dict['loss_sum'] = loss_sum
+            # stash scalar loss components so the train loop can log them
+            self._last_loss_dict = {k: _get_item(v) for k, v in loss_dict.items()}
             # TODO: log
             # # add train prefix to loss_dict
             # prefixed_loss_dict = {f"train/{k}": v for k, v in loss_dict.items()}
@@ -153,25 +168,40 @@ class DummySystem():
     def train(self):
         assert self.optimizer is not None, "optimizer is None, cannot train"
         self.model.set_predict(False)
+        global_step = 0
         for epoch in range(self.epochs):
             self.current_epoch = epoch
             self.model.train()
             self.on_train_epoch_start()
+            _wandb_log({'train/lr': self.optimizer.lr, 'epoch': epoch}, step=global_step)
             train_dataloader = self.dataset_module.train_dataloader()
             assert train_dataloader is not None, "train_dataloader is None"
             pbar = tqdm(train_dataloader, total=len(train_dataloader)//train_dataloader.batch_size) # type: ignore
+            epoch_loss_sum, epoch_loss_cnt = 0.0, 0
             for batch_idx, batch in enumerate(pbar):
                 self.on_train_batch_start()
                 loss = self.training_step(batch)
                 self.optimizer.zero_grad()
                 self.optimizer.backward(loss)
+                loss_val = _get_item(loss)
+                epoch_loss_sum += loss_val
+                epoch_loss_cnt += 1
                 if batch_idx % self.log_interval == 0:
-                    pbar.set_description(f"Epoch {epoch}, Loss: {_get_item(loss)}")
+                    pbar.set_description(f"Epoch {epoch}, Loss: {loss_val}")
+                    log = {f"train/{k}": v for k, v in self._last_loss_dict.items()}
+                    log['train/loss'] = loss_val
+                    log['train/lr'] = self.optimizer.lr
+                    log['epoch'] = epoch
+                    _wandb_log(log, step=global_step)
                 self.on_before_optimizer_step(self.optimizer)
                 self.optimizer.step()
                 self.on_train_batch_end()
+                global_step += 1
             self.on_train_epoch_end()
-            
+            if epoch_loss_cnt > 0:
+                _wandb_log({'train/epoch_loss': epoch_loss_sum / epoch_loss_cnt, 'epoch': epoch},
+                           step=global_step)
+
             self.model.eval()
             validate_dataloader = self.dataset_module.validate_dataloader()
             if validate_dataloader is not None:
@@ -191,12 +221,20 @@ class DummySystem():
                         loss = self.validation_step(batch)
                         pbar.set_description(f"Epoch {epoch}, Validate, Loss: {_get_item(loss)}")
                         self.on_validation_batch_end()
+                # log mean of each accumulated validation metric for this epoch
+                val_means = {k: (sum(v) / len(v)) for k, v in self._validation_loss.items() if v}
+                if val_means:
+                    val_means['epoch'] = epoch
+                    _wandb_log(val_means, step=global_step)
                 self.on_validation_epoch_end()
-            
+
             checkpoint_path = os.path.join(self.ckpt_save_dir, f'{self.ckpt_save_name}_{epoch}.pkl')
             os.makedirs(self.ckpt_save_dir, exist_ok=True)
             self.model.save(checkpoint_path)
-    
+
+        if _HAS_WANDB and wandb.run is not None:
+            wandb.finish()
+
     def predict(self):
         # only iterate once
         self.model.set_predict(True)
