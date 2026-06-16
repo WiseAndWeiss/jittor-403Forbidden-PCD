@@ -1,0 +1,28 @@
+mode: train
+debug: False
+load_ckpt: null
+
+components:
+  data: train_asdn
+  transform: asdn
+  system: asdn
+  model: asdn
+
+loss:
+  loss: 1.0
+
+optimizer:
+  __target__: adam
+  lr: 0.0005
+  weight_decay: 0.0
+
+trainer:
+  epochs: 800
+  warmup_epochs: 5
+  log_interval: 20
+
+wandb:
+  enabled: true
+  project: asdn-pcdenoise
+  name: null        # optional; null = auto-generated
+  mode: online      # online | offline | disabled
