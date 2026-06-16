@@ -5,9 +5,9 @@ import jittor as jt
 import numpy as np
 
 from .feature import FeatureExtraction, Decoder
-from .spec import ModelSpec
+from ..spec import ModelSpec
 
-from ..data.asset import Asset
+from ...data.asset import Asset
 
 def get_random_indices(n, m):
     assert m <= n

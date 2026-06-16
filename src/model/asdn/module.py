@@ -11,7 +11,7 @@ from .classify import ScaleNet
 from .loss import calc_cd_like_InfoV2
 
 from ..spec import ModelSpec
-from ..feature import get_knn_idx
+from .feature import get_knn_idx
 
 
 def get_entropy_B(point_clouds):

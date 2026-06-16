@@ -227,3 +227,29 @@ class FeatureExtraction(nn.Module):
         x_out = x_out.reshape(batch_size, num_points, -1)
 
         return x_out
+
+
+_knn_proj_cache = {}
+
+def _get_knn_proj(in_dim):
+    if in_dim not in _knn_proj_cache:
+        proj = jt.randn(in_dim, 3)
+        proj = proj / jt.norm(proj, dim=0, keepdims=True)
+        _knn_proj_cache[in_dim] = proj
+    return _knn_proj_cache[in_dim]
+
+def get_knn_idx(x, y, k, offset=0):
+    """
+    x: (B, N, d)
+    y: (B, M, d)
+    return: (B, N, k)
+    """
+    K = k + offset
+    if x.shape[-1] == 3:
+        _, idx = jt.misc.knn(x, y, K)
+    else:
+        proj = _get_knn_proj(x.shape[-1])
+        x_proj = x @ proj
+        y_proj = y @ proj
+        _, idx = jt.misc.knn(x_proj, y_proj, K)
+    return idx[:, :, offset:]

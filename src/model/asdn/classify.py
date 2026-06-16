@@ -2,7 +2,7 @@ import math
 import jittor as jt
 from jittor import nn
 
-from ..feature import get_knn_idx
+from .feature import get_knn_idx
 
 
 def remove_self_loops(edge_index):
