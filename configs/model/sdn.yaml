@@ -9,18 +9,21 @@ patch_size: 1000              # points per training patch (must match transform)
 kp_mask: 256                  # K_p highlighted points used for the loss
 lambda_weight: 0.99           # loss weight lambda (Eq. 9)
 t_min: 1                      # minimum sampled diffusion timestep
-# Floor for sigma_bar inside the (1-lambda)/sigma_bar weight, to tame the t->0
-# singularity (else stage-2 s=0 samples spike the loss to ~1e7). Default (null) =
-# sigma_bar at t_min. Raise it to further smooth the loss at the cost of fidelity.
-weight_sigma_floor: null
+# Floor for sigma_bar inside the (1-lambda)/sigma_bar weight. CRITICAL: too small
+# a floor (e.g. sigma_bar(t_min)=3e-5) makes the weight ~317 for tiny-noise and the
+# stage-2 s=0 (clean target, displacement~0) cases, so the loss is dominated by
+# "predict ~zero" -> the network collapses toward no displacement and denoising
+# DEGRADES with training. Floor at the competition noise scale (0.5%) caps the
+# weight at ~3 and balances the loss across noise levels.
+weight_sigma_floor: 0.005
 
 # ---- network architecture (Sec 4.1) ----
-feat_dim: 256                 # DGCNN embedding / fused-feature dim (baseline vm uses 512)
+feat_dim: 128                 # DGCNN embedding / fused-feature dim
 k_graph: 32                   # DGCNN dynamic-graph k
 k_grad: 32                    # neighbours for gradient fusion (paper k=32)
 num_pos_freqs: 6              # Fourier positional-encoding bands
 time_dim: 64                  # timestep embedding dim
-grad_hidden: 256             # gradient-prediction MLP width
+grad_hidden: 128             # gradient-prediction MLP width
 num_res_blocks: 4            # residual blocks in gradient prediction (paper: 4)
 
 # ---- adaptive & iterative denoising (Algorithm 2) ----
