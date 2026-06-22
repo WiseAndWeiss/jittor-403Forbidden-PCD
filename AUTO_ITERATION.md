@@ -109,3 +109,17 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
 - Trimesh load + surface sampling per step was indeed the bottleneck.
 - Next: eval at checkpoint ~30 to confirm trajectory toward 80; then predict-side
   sweep (L, seed_k) on the best checkpoint.
+
+### 2026-06-23 — run #6 eval@15 + predict sweep findings
+- **Local eval @ checkpoint_15 (run #6): 47.88** (CD 36.95, P2S 58.82). Up from
+  43.39 but slow; **P2S >> CD** => points reach the surface but CD (distribution)
+  lags.
+- **noise_scale sweep (tools/sweep_predict.py) is FLAT**: scale 1->8 moves tau
+  40->114 but final score stays ~39 on 6 tables (CD ~28.6, P2S ~49.3). =>
+  NOT under-denoising; denoising saturates. Bottleneck = model score quality.
+  Keep `predict_noise_scale: 1.0`.
+- Interpretation: epoch 15 is early (cosine LR ~94% of peak); score denoisers
+  gain most as LR anneals (epochs ~60-100). Plan: keep training, measure the
+  slope at checkpoint_40, then 80. If it plateaus < 80, raise capacity
+  (feat_dim 128->256, grad_hidden) and/or add light output smoothing/outlier
+  removal (vm-style post-proc improved CD/P2S there).
