@@ -82,3 +82,20 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
      consider raising toward 50000 so patch density matches test.
   3. Once a mid/late checkpoint exists, run `scripts/predict_sdn.sh` on the full
      test set and sanity-check CD/P2S behavior + total inference time.
+
+### 2026-06-23 — local eval harness + first baseline
+- Added a local evaluation path (no official GT needed): `datalist/local_test.txt`
+  (32 shapes, stratified to the test category mix), `tools/make_local_valset.py`
+  (mesh-frame clean GT + noisy), `scripts/eval_local.sh` (denoise + evaluate.py),
+  installed `point_cloud_utils` for accurate P2S.
+- **Baseline @ checkpoint_7 (epoch 7): final 43.39** (CD 33.78, P2S 53.01).
+  CD_pred 1.70e-4 vs CD_noisy 2.63e-4; P2S_pred 7.2e-5 vs P2S_noisy 1.54e-4.
+- Target: **>=80**. Gap is large but the model is very early (7/100 epochs) and
+  training is slow (~30 min/epoch, num_workers=0). Plan to close the gap:
+  1. **Throughput first** (critical path): cache mesh-sampled clouds so epochs are
+     fast enough to actually train to convergence; then raise base `num_samples`
+     toward 50k to match test density.
+  2. Re-eval the local set at later checkpoints to track the trajectory.
+  3. Predict-side tuning on a fixed checkpoint (cheap, no retrain): `num_iters` L,
+     `predict_seed_k` (patch coverage), noise-variance estimate — sweep for best score.
+  4. If quality plateaus: revisit patch_size/kp_mask, lambda, model capacity.
