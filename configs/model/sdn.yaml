@@ -9,6 +9,10 @@ patch_size: 1000              # points per training patch (must match transform)
 kp_mask: 256                  # K_p highlighted points used for the loss
 lambda_weight: 0.99           # loss weight lambda (Eq. 9)
 t_min: 1                      # minimum sampled diffusion timestep
+# Floor for sigma_bar inside the (1-lambda)/sigma_bar weight, to tame the t->0
+# singularity (else stage-2 s=0 samples spike the loss to ~1e7). Default (null) =
+# sigma_bar at t_min. Raise it to further smooth the loss at the cost of fidelity.
+weight_sigma_floor: null
 
 # ---- network architecture (Sec 4.1) ----
 feat_dim: 128                 # DGCNN embedding / fused-feature dim

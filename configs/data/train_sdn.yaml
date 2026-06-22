@@ -7,7 +7,7 @@ loader: &loader obj
 train_dataset:
   shuffle: True
   batch_size: 8
-  num_workers: 4      # 4/rank (12 total) loads in parallel; high counts (8/rank=24) segfault under MPI
+  num_workers: 0      # Jittor MPI dataloader workers segfault (fork+threads); load in main proc
   datapath:
     input_dataset_dir: ./dataset_train
     use_prob: True

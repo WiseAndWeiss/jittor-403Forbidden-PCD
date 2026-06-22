@@ -73,6 +73,15 @@ class SDNModule(ModelSpec):
         self.kp_mask = cfg.get('kp_mask', 256)              # K_p highlighted points
         self.lam = cfg.get('lambda_weight', 0.99)           # loss weight lambda (Eq. 9)
         self.t_min = cfg.get('t_min', 1)                    # min sampled timestep
+        # The interpolated weight (1-lambda)/sigma_bar + lambda diverges as
+        # sigma_bar -> 0 (the clean end, reachable when stage-2 samples
+        # Delta = t -> s = 0). Floor sigma_bar in the weight at the smallest
+        # *trained* noise scale so the weight stays bounded and the loss does not
+        # spike to ~1e7 on those samples. Faithful to the paper for all real
+        # timesteps; only regularises the t->0 singularity.
+        floor = cfg.get('weight_sigma_floor', None)
+        self.weight_sigma_floor = float(floor) if floor is not None \
+            else float(self.schedule.sigma_of(self.t_min))
 
         # ---- network ----
         self.feat_dim = cfg.get('feat_dim', 128)
@@ -141,7 +150,8 @@ class SDNModule(ModelSpec):
         x_q1 = x_t[:, :Kp, :]
         score_t = self.net.predict_score(x_q1, x_t, F_t)         # (G, Kp, 3)
 
-        w_t = jt.array(((1.0 - self.lam) / sigma_t + self.lam).astype(np.float32)).reshape(G, 1, 1)
+        sigma_t_w = np.maximum(sigma_t, self.weight_sigma_floor)
+        w_t = jt.array(((1.0 - self.lam) / sigma_t_w + self.lam).astype(np.float32)).reshape(G, 1, 1)
         loss_t = ((w_t * (score_t - S_t[:, :Kp, :])) ** 2).sum(dim=-1).mean()
 
         # ---------------- Stage 2: sample x_{t-d} and predict s(x_{t-d}|x_t) ---
@@ -163,7 +173,7 @@ class SDNModule(ModelSpec):
         score_s = self.net.predict_score(x_q2, x_s, F_s)
 
         sigma_s = self.schedule.sigma_of(s_idx)
-        sigma_s = np.maximum(sigma_s, 1e-8)
+        sigma_s = np.maximum(sigma_s, self.weight_sigma_floor)   # floor weight singularity at s->0
         w_s = jt.array(((1.0 - self.lam) / sigma_s + self.lam).astype(np.float32)).reshape(G, 1, 1)
         loss_s = ((w_s * (score_s - S_s[:, :Kp, :])) ** 2).sum(dim=-1).mean()
 

@@ -20,15 +20,12 @@ conda activate jittor
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2}"
 NP="${NP:-3}"
 
-# Force single-threaded BLAS/OpenMP. With dataloader workers under MPI, forking a
-# process that has live OpenMP/MKL thread pools (scipy cKDTree, numpy) segfaults
-# (Caught SIGCHLD ... si_status 11). Single-threaded workers avoid the fork+threads
-# crash and also prevent CPU oversubscription across the 3 ranks.
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export NUMEXPR_NUM_THREADS=1
-export VECLIB_MAXIMUM_THREADS=1
+# NOTE: Jittor's dataloader workers segfault under MPI (fork-after-CUDA +
+# threaded scipy/numpy), so training uses num_workers=0 (data loads in the main
+# process). We therefore leave BLAS/OpenMP multi-threaded so main-process data
+# prep (mesh sampling + cKDTree) stays fast. Limit threads per rank to avoid the
+# 3 ranks oversubscribing the CPU.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 TASK="${TASK:-configs/task/train_sdn.yaml}"
 
 mkdir -p logs experiments/sdn
