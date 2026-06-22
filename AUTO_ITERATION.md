@@ -123,3 +123,20 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
   slope at checkpoint_40, then 80. If it plateaus < 80, raise capacity
   (feat_dim 128->256, grad_hidden) and/or add light output smoothing/outlier
   removal (vm-style post-proc improved CD/P2S there).
+
+### 2026-06-23 — root-cause diagnosis + capacity pivot (run #7)
+- **Diagnostics (tools/diagnose.py)** ruled out a structural bug: CD splits into
+  pred->GT (surface, improves ~45-60%) and GT->pred (coverage, already small &
+  stable); denoised NN-spacing (0.0088) > GT spacing (0.0056) => NOT clustering.
+  Mechanism correct; the model just leaves a rough surface (= undertrained / low capacity).
+- **Leakage quantified**: full-32 47.88 vs true-holdout-19 **45.45** (~2.4 pt
+  inflation). Added `datalist/local_holdout.txt` + `evaluate.py --keys_list` for
+  honest holdout scoring.
+- **Post-proc disabled** (`predict_post_smooth: false`): it helps a weak model
+  (+7.5) but is a crutch that hurts a strong one (per user). Focus on the model.
+- **Capacity pivot (run #7)**: SDN used feat_dim=128 vs the repo's vm baseline
+  (76 pts) at 512 -> raised feat_dim/grad_hidden 128->256; training set now
+  EXCLUDES all eval shapes (0 overlap, true holdout). ~10 min/epoch on GPUs 2,3.
+- Plan: train to convergence; eval true holdout at checkpoints 15/30/60. If
+  feat256 underperforms, go 512. Other levers: lambda tuned to 0.5-2% noise,
+  denser NN reference for GT score, longer training.
