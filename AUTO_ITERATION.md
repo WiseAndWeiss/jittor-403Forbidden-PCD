@@ -140,3 +140,19 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
 - Plan: train to convergence; eval true holdout at checkpoints 15/30/60. If
   feat256 underperforms, go 512. Other levers: lambda tuned to 0.5-2% noise,
   denser NN reference for GT score, longer training.
+
+### 2026-06-23 — CRITICAL: loss-weight collapse bug found & fixed (run #8)
+- feat256 holdout **DECREASED** with training: e15=39.09 -> e30=33.86, while train
+  loss kept dropping. Loss is MISALIGNED with the metric. (feat256@15 < feat128@15
+  because the bigger model fits the broken objective faster.)
+- **Root cause**: the earlier `weight_sigma_floor = sigma_bar(t_min) = 3e-5` (added
+  to stop 1e7 loss spikes) makes the weight `(1-λ)/σ̄+λ` ≈ **317** for tiny-noise and
+  the stage-2 s=0 (clean target, displacement≈0) cases. The loss is dominated by
+  "predict ≈ zero", so the net collapses toward NO displacement -> denoises LESS as
+  it trains. This explains rough surfaces, flat noise_scale sweep, and the
+  decreasing trajectory all at once.
+- **Fix**: `weight_sigma_floor: 0.005` (competition noise scale) -> weight capped at
+  ~3, balanced across noise levels. Reverted feat_dim 256->128 for fast validation
+  (capacity wasn't the issue; the bigger model just collapsed faster).
+- run #8 = feat128 + floor 0.005 + clean holdout + post-proc off. Success criterion:
+  holdout score now INCREASES with training (vs 39->34). Eval at ckpt 15/30.
