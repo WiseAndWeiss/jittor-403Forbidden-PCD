@@ -107,6 +107,10 @@ class SDNModule(ModelSpec):
         # too small and denoising too weak. Scale the noise estimate to denoise
         # harder; sweep this on the local eval. 1.0 = paper-literal.
         self.predict_noise_scale = cfg.get('predict_noise_scale', 1.0)
+        # Optional output post-processing (outlier pull-in + light normal-direction
+        # smoothing). Cheap, training-independent; can improve CD/P2S. Off by default.
+        self.predict_post_smooth = cfg.get('predict_post_smooth', False)
+        self.pca_smooth_alpha = cfg.get('pca_smooth_alpha', 0.0)
 
     # ------------------------------------------------------------------ #
     # data plumbing
@@ -292,6 +296,45 @@ class SDNModule(ModelSpec):
                 out[target] = denoised[p][sel]
         return out, tau
 
+    @staticmethod
+    def smooth_outliers(points, k=16, n_sigma=3.0):
+        """Pull statistical outliers toward their local neighbour mean."""
+        from scipy.spatial import cKDTree
+        tree = cKDTree(points)
+        _, idx = tree.query(points, k=k + 1)
+        neighbors = points[idx[:, 1:]]
+        neighbor_mean = neighbors.mean(axis=1)
+        dist_to_mean = np.linalg.norm(points - neighbor_mean, axis=1)
+        avg = dist_to_mean.mean()
+        mask = dist_to_mean > n_sigma * avg
+        if mask.sum() > 0:
+            alpha = np.clip(1.0 - (n_sigma * avg) / (dist_to_mean[mask] + 1e-8), 0, 1)
+            points[mask] = points[mask] + alpha[:, None] * (neighbor_mean[mask] - points[mask])
+        return points
+
+    @staticmethod
+    def pca_smooth(points, k=12, alpha=0.3):
+        """Move each point slightly along its local normal toward the neighbourhood
+        mean (mild surface smoothing)."""
+        from scipy.spatial import cKDTree
+        tree = cKDTree(points)
+        _, idx = tree.query(points, k=k + 1)
+        neighbors = points[idx[:, 1:]]
+        neighbor_mean = neighbors.mean(axis=1)
+        centered = neighbors - neighbor_mean[:, None, :]
+        cov = np.einsum('nki,nkj->nij', centered, centered) / k
+        _, eigvec = np.linalg.eigh(cov)
+        normals = eigvec[:, :, 0]
+        disp = neighbor_mean - points
+        normal_comp = np.sum(disp * normals, axis=1, keepdims=True) * normals
+        return points + alpha * normal_comp
+
+    def post_process(self, points):
+        points = self.smooth_outliers(points)
+        if self.pca_smooth_alpha > 0:
+            points = self.pca_smooth(points, alpha=self.pca_smooth_alpha)
+        return points
+
     @jt.no_grad()
     def predict_step(self, batch: Dict) -> List[Dict]:
         pc_noisy_batch = batch['pc_noisy']
@@ -300,6 +343,8 @@ class SDNModule(ModelSpec):
         for i, pc_noisy in enumerate(pc_noisy_batch):
             pc_denoised, tau = self.adaptive_denoise(pc_noisy)
             pc_denoised = pc_denoised.detach().numpy()
+            if self.predict_post_smooth:
+                pc_denoised = self.post_process(pc_denoised)
 
             if 'norm_center' in batch and 'norm_scale' in batch:
                 center = batch['norm_center'][i]

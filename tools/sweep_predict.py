@@ -41,46 +41,52 @@ def main():
     ap.add_argument('--mesh_dir', default='dataset_train')
     ap.add_argument('--eval_dir', default='local_eval')
     ap.add_argument('--n', type=int, default=6)
-    ap.add_argument('--scales', default='1,2,3,5')
+    ap.add_argument('--scale', type=float, default=1.0, help='noise estimate scale')
+    ap.add_argument('--pca_alphas', default='0,0.2,0.3,0.5',
+                    help='post-proc pca smoothing strengths to sweep (0 = raw)')
     ap.add_argument('--L', type=int, default=0, help='override num_iters (0=keep)')
     args = ap.parse_args()
 
     keys = [l.strip() for l in open(args.list) if l.strip()][:args.n]
-    scales = [float(s) for s in args.scales.split(',')]
+    alphas = [float(a) for a in args.pca_alphas.split(',')]
     model = load_model(args.ckpt)
+    model.predict_noise_scale = args.scale
     if args.L > 0:
         model.L = args.L
-    print(f"[sweep] ckpt={args.ckpt} n={len(keys)} scales={scales} L={model.L}")
+    print(f"[sweep] ckpt={args.ckpt} n={len(keys)} scale={args.scale} "
+          f"L={model.L} pca_alphas={alphas}")
 
-    # preload shapes (noisy, gt, mesh)
+    # preload shapes and denoise each ONCE (raw); post-proc is applied afterwards.
     shapes = []
+    t0 = time.time()
     for k in keys:
         noisy = np.load(os.path.join(args.eval_dir, 'noisy', k, 'noisy.npy')).astype(np.float64)
         gt = np.load(os.path.join(args.eval_dir, 'gt', k, 'clean.npy')).astype(np.float64)
         mv, mf = ev.load_mesh_vf(os.path.join(args.mesh_dir, k, 'models/model_normalized.obj'))
-        shapes.append((k, noisy, gt, mv, mf))
+        den, tau = model.adaptive_denoise(jt.array(noisy.astype(np.float32)))
+        den = den.detach().numpy().astype(np.float64)
+        cd_noisy = ev.chamfer_distance(noisy, gt, normalize=True)
+        p2s_noisy = (ev.point_to_surface_distance(noisy, mv, mf, normalize_ref_pc=gt)
+                     if mv is not None else None)
+        shapes.append((k, den, gt, mv, mf, cd_noisy, p2s_noisy))
+    print(f"[sweep] denoised {len(keys)} shapes in {time.time()-t0:.1f}s")
 
-    print(f"{'scale':>6} | {'tau':>5} | {'CD_score':>8} | {'P2S_score':>9} | {'final':>6} | {'sec':>5}")
-    for sc in scales:
-        model.predict_noise_scale = sc
-        cd_s, p2s_s, taus = [], [], []
-        t0 = time.time()
-        for (k, noisy, gt, mv, mf) in shapes:
-            den, tau = model.adaptive_denoise(jt.array(noisy.astype(np.float32)))
-            den = den.detach().numpy().astype(np.float64)
-            taus.append(tau)
+    print(f"{'pca_a':>6} | {'CD_score':>8} | {'P2S_score':>9} | {'final':>6}")
+    for a in alphas:
+        cd_s, p2s_s = [], []
+        for (k, den_raw, gt, mv, mf, cd_noisy, p2s_noisy) in shapes:
+            den = den_raw.copy()
+            if a > 0:
+                den = model.smooth_outliers(den)
+                den = model.pca_smooth(den, alpha=a)
             cd_pred = ev.chamfer_distance(den, gt, normalize=True)
-            cd_noisy = ev.chamfer_distance(noisy, gt, normalize=True)
             cd_s.append(ev.metric_to_score(cd_pred, cd_noisy))
             if mv is not None:
                 p2s_pred = ev.point_to_surface_distance(den, mv, mf, normalize_ref_pc=gt)
-                p2s_noisy = ev.point_to_surface_distance(noisy, mv, mf, normalize_ref_pc=gt)
                 p2s_s.append(ev.metric_to_score(p2s_pred, p2s_noisy))
         mcd = float(np.mean(cd_s))
         mp2s = float(np.mean(p2s_s)) if p2s_s else 0.0
-        final = 0.5 * mcd + 0.5 * mp2s
-        print(f"{sc:>6.1f} | {int(np.mean(taus)):>5} | {mcd:>8.2f} | {mp2s:>9.2f} | "
-              f"{final:>6.2f} | {time.time()-t0:>5.1f}")
+        print(f"{a:>6.2f} | {mcd:>8.2f} | {mp2s:>9.2f} | {0.5*mcd+0.5*mp2s:>6.2f}")
 
 
 if __name__ == '__main__':
