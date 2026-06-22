@@ -19,6 +19,16 @@ conda activate jittor
 # Use 3 of the 4 A6000s by default (leave one card for other users).
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2}"
 NP="${NP:-3}"
+
+# Force single-threaded BLAS/OpenMP. With dataloader workers under MPI, forking a
+# process that has live OpenMP/MKL thread pools (scipy cKDTree, numpy) segfaults
+# (Caught SIGCHLD ... si_status 11). Single-threaded workers avoid the fork+threads
+# crash and also prevent CPU oversubscription across the 3 ranks.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
 TASK="${TASK:-configs/task/train_sdn.yaml}"
 
 mkdir -p logs experiments/sdn
