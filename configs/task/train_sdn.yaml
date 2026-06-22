@@ -22,6 +22,7 @@ trainer:
   epochs: 100
   warmup_epochs: 5
   log_interval: 20
+  grad_clip: 5.0       # clip grad-norm to stabilise score-matching (0 = off)
 
 wandb:
   enabled: true

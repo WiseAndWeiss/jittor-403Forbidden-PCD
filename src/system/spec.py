@@ -122,6 +122,7 @@ class DummySystem():
         self.epochs = trainer_config.get('epochs', 1)
         self.log_interval = trainer_config.get('log_interval', 10)
         self.warmup_epochs = trainer_config.get('warmup_epochs', 0)
+        self.grad_clip = trainer_config.get('grad_clip', 0.0)   # 0 disables clipping
         self.current_epoch = 0
 
         if optimizer_config is not None and model is not None:
@@ -245,6 +246,9 @@ class DummySystem():
                     log.update(gpu_stats())     # GPU util / memory of all cards
                     _wandb_log(log, step=global_step)
                 self.on_before_optimizer_step(self.optimizer)
+                if self.grad_clip and self.grad_clip > 0:
+                    # guard against rare exploding score-matching gradients
+                    self.optimizer.clip_grad_norm(self.grad_clip)
                 self.optimizer.step()
                 self.on_train_batch_end()
                 global_step += 1

@@ -56,12 +56,14 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         self.num_freqs = num_freqs
         self.out_dim = 3 * (2 * num_freqs + 1)
-        self.freq_bands = 2.0 ** jt.arange(num_freqs).float32() * math.pi
+        # Plain python floats (not a jt.Var) so they are NOT registered as
+        # trainable parameters -- these frequency bands are fixed constants.
+        self.freq_bands = [float(2.0 ** i * math.pi) for i in range(num_freqs)]
 
     def execute(self, x):
         # x: (B, N, 3) -> (B, N, out_dim)
         feats = [x]
-        for f in self.freq_bands.numpy().tolist():
+        for f in self.freq_bands:
             feats.append(jt.sin(x * f))
             feats.append(jt.cos(x * f))
         return jt.concat(feats, dim=-1)
