@@ -99,3 +99,13 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
   3. Predict-side tuning on a fixed checkpoint (cheap, no retrain): `num_iters` L,
      `predict_seed_k` (patch coverage), noise-variance estimate — sweep for best score.
   4. If quality plateaus: revisit patch_size/kp_mask, lambda, model capacity.
+
+### 2026-06-23 — run #6: cloud cache + 50k density (the throughput fix)
+- Pre-sampled 3851 train + 100 val meshes to 50k-point clouds (`dataset_cache`, 2.3G),
+  added `npy_cloud` loader; training now np.loads clouds + crops patches.
+- **Epoch time 23 min -> ~4.3 min (~5x faster)** at 3.9 it/s, even on 2 GPUs.
+  (GPUs 0,1 were taken by another user `xuewenhan`; run #6 uses GPUs 2,3, NP=2.)
+  100 epochs now ~7h instead of ~50h. Patch density now matches the 50k test clouds.
+- Trimesh load + surface sampling per step was indeed the bottleneck.
+- Next: eval at checkpoint ~30 to confirm trajectory toward 80; then predict-side
+  sweep (L, seed_k) on the best checkpoint.
