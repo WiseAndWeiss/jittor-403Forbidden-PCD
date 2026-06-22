@@ -40,3 +40,19 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
   `grad_clip: 5.0` to bound steps. Watch whether loss settles within the first epochs;
   if it stays unstable, candidates: raise `t_min`, lower `lr`, or lower `grad_clip`.
 - Next: launch full 3-GPU run (100 epochs, wandb online), then poll & retune.
+
+### 2026-06-22 — run #1 launched (3×A6000, GPUs 0,1,2)
+- Bring-up issues fixed: (1) CRLF in deployed `.sh` (→ `.gitattributes` eol=lf);
+  (2) my `pkill -f` patterns self-matched the launching shell (→ launch without
+  self-matching patterns; use `[p]ython …` bracket trick for the completion waiter);
+  (3) **Jittor dataloader workers segfault under MPI** (fork-after-CUDA, si_status 11)
+  even though RAM/shm are ample → set `num_workers: 0`.
+- Status: training stable. Epoch 0 ~12 min (≈1.8 it/s, 1250 steps), losses healthy
+  and decreasing (~0.13 → 0.005 across ranks). WandB run `sdn-pcdenoise/74cojdqi`.
+- **Throughput is data-bound** (num_workers=0 → GPU util low/uneven). Top retune
+  target for next iteration: restore parallel loading without the MPI worker
+  segfault — options: smaller `num_samples` in the `sample` augment to cut per-step
+  CPU; try `num_workers: 2`; or a CPU-only worker path. ~12 min/epoch ⇒ ~20 h for
+  100 epochs as-is.
+- Auto-iteration: a background waiter blocks until the 3 training procs exit
+  (finish or crash) and wakes Claude to analyze + retune + relaunch.
