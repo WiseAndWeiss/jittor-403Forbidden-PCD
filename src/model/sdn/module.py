@@ -102,6 +102,11 @@ class SDNModule(ModelSpec):
         self.predict_patch_size = cfg.get('predict_patch_size', 1000)
         self.predict_seed_k = cfg.get('predict_seed_k', 3)  # patch overlap factor
         self.predict_patch_step = cfg.get('predict_patch_step', 16)  # patches / batch
+        # Var(||score||) underestimates the per-coordinate noise variance sigma_bar^2
+        # (for 3D Gaussian noise Var(||.||) ~ 0.45 sigma^2), so the estimated tau is
+        # too small and denoising too weak. Scale the noise estimate to denoise
+        # harder; sweep this on the local eval. 1.0 = paper-literal.
+        self.predict_noise_scale = cfg.get('predict_noise_scale', 1.0)
 
     # ------------------------------------------------------------------ #
     # data plumbing
@@ -269,7 +274,7 @@ class SDNModule(ModelSpec):
         """Full Algorithm 2 for a single (N, 3) point cloud."""
         patches_c, seed_expand, point_idxs, best_patch, P = self._build_patches(pcl_noisy)
 
-        sigma2 = self._estimate_noise_var(patches_c)           # Eq. 15
+        sigma2 = self._estimate_noise_var(patches_c) * self.predict_noise_scale  # Eq. 15 (+scale)
         tau = self.schedule.find_tau(sigma2)                   # Eq. 16
         timesteps = self.schedule.adaptive_timesteps(tau, self.L)
 
