@@ -1,0 +1,4 @@
+__target__: vm                 # reuse the generic VMSystem (optimizer/LR/loop/wandb)
+
+ckpt_save_dir: experiments/sdn
+ckpt_save_name: checkpoint

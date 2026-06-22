@@ -17,10 +17,60 @@ except ImportError:
     _HAS_WANDB = False
 
 
+def get_rank() -> int:
+    """MPI rank (0 when running single-process)."""
+    try:
+        return jt.rank
+    except Exception:
+        return 0
+
+
+def get_world_size() -> int:
+    try:
+        return jt.world_size
+    except Exception:
+        return 1
+
+
+def is_main_process() -> bool:
+    return get_rank() == 0
+
+
 def _wandb_log(data: dict, step: Optional[int] = None):
-    """Log to Weights & Biases if a run is active; otherwise a no-op."""
-    if _HAS_WANDB and wandb.run is not None:
+    """Log to Weights & Biases if a run is active (rank-0 only); else a no-op."""
+    if _HAS_WANDB and wandb.run is not None and is_main_process():
         wandb.log(data, step=step)
+
+
+def gpu_stats() -> dict:
+    """Query per-GPU utilisation / memory via nvidia-smi for wandb logging.
+
+    Returns a flat dict like {'gpu/0/util': 97, 'gpu/0/mem_used_mb': 1234, ...}
+    plus averages. Best-effort: returns {} if nvidia-smi is unavailable.
+    """
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=index,utilization.gpu,memory.used',
+             '--format=csv,noheader,nounits'],
+            timeout=5,
+        ).decode()
+    except Exception:
+        return {}
+    stats, utils, mems = {}, [], []
+    for line in out.strip().splitlines():
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) < 3:
+            continue
+        idx, util, mem = parts[0], float(parts[1]), float(parts[2])
+        stats[f'gpu/{idx}/util'] = util
+        stats[f'gpu/{idx}/mem_used_mb'] = mem
+        utils.append(util)
+        mems.append(mem)
+    if utils:
+        stats['gpu/util_mean'] = sum(utils) / len(utils)
+        stats['gpu/mem_used_mb_mean'] = sum(mems) / len(mems)
+    return stats
 
 def _get_item(x):
     if isinstance(x, jt.Var):
@@ -192,6 +242,7 @@ class DummySystem():
                     log['train/loss'] = loss_val
                     log['train/lr'] = self.optimizer.lr
                     log['epoch'] = epoch
+                    log.update(gpu_stats())     # GPU util / memory of all cards
                     _wandb_log(log, step=global_step)
                 self.on_before_optimizer_step(self.optimizer)
                 self.optimizer.step()
@@ -228,11 +279,21 @@ class DummySystem():
                     _wandb_log(val_means, step=global_step)
                 self.on_validation_epoch_end()
 
-            checkpoint_path = os.path.join(self.ckpt_save_dir, f'{self.ckpt_save_name}_{epoch}.pkl')
-            os.makedirs(self.ckpt_save_dir, exist_ok=True)
-            self.model.save(checkpoint_path)
+            # Save checkpoints on the main process only (avoids MPI write races).
+            if is_main_process():
+                checkpoint_path = os.path.join(self.ckpt_save_dir, f'{self.ckpt_save_name}_{epoch}.pkl')
+                os.makedirs(self.ckpt_save_dir, exist_ok=True)
+                self.model.save(checkpoint_path)
+            if get_world_size() > 1:
+                # keep ranks in lock-step across the epoch boundary
+                try:
+                    jt.sync_all()
+                    if getattr(jt, 'mpi', None) is not None:
+                        jt.mpi.barrier()
+                except Exception:
+                    pass
 
-        if _HAS_WANDB and wandb.run is not None:
+        if _HAS_WANDB and wandb.run is not None and is_main_process():
             wandb.finish()
 
     def predict(self):

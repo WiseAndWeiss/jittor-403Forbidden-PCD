@@ -189,6 +189,56 @@ class AugmentPatch(Augment):
         asset.meta['pc_mix'] = pat_t
         asset.meta['noise_level'] = 1.0 - t
 
+@dataclass(frozen=True)
+class AugmentSDNPatch(Augment):
+    """Clean-patch initialization for the score-based diffusion denoiser
+    (paper "Adaptive and Iterative ...", Algorithm 1, Patch Initialization).
+
+    Crops ``num_patches`` local patches of ``patch_size`` *clean* points and a
+    point-wise mask M highlighting the ``kp_mask`` (K_p) points nearest to each
+    patch centre. The diffusion noise itself is injected inside the model's
+    training_step, so this augment only needs the clean point cloud.
+    """
+
+    patch_size: int
+
+    num_patches: int
+
+    kp_mask: int = 256
+
+    @classmethod
+    def parse(cls, **kwargs) -> 'AugmentSDNPatch':
+        cls.check_keys(kwargs)
+        return AugmentSDNPatch(**kwargs)
+
+    def apply(self, asset: Asset, **kwargs):
+        pc = asset.sampled_vertices
+        if pc is None:                       # predict mode: model patches internally
+            return
+        N = pc.shape[0]
+        kp = min(self.kp_mask, self.patch_size)
+
+        seed_idx = np.random.permutation(N)[:self.num_patches]   # (P,)
+        seed_points = pc[seed_idx]                               # (P, 3)
+
+        tree = cKDTree(pc)
+        # cKDTree returns neighbours sorted by distance, so the first K_p
+        # columns are exactly the K_p closest points to each seed.
+        _, nn_idx = tree.query(seed_points, k=self.patch_size)   # (P, M)
+
+        patches = pc[nn_idx]                                     # (P, M, 3) clean
+        center = seed_points[:, None, :]                         # (P, 1, 3)
+        patches = patches - center                              # center each patch
+
+        mask = np.zeros((self.num_patches, self.patch_size), dtype=np.float32)
+        mask[:, :kp] = 1.0                                      # highlight K_p nearest
+
+        if asset.meta is None:
+            asset.meta = {}
+        asset.meta['patch_clean'] = patches.astype(np.float32)
+        asset.meta['mask'] = mask
+
+
 def get_augments(*args) -> List[Augment]:
     MAP = {
         "sample": AugmentSample,
@@ -196,6 +246,7 @@ def get_augments(*args) -> List[Augment]:
         "add_noise": AugmentAddNoise,
         "linear": AugmentLinear,
         "patch": AugmentPatch,
+        "sdn_patch": AugmentSDNPatch,
     }
     MAP: Dict[str, type[Augment]]
     augments = []

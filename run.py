@@ -38,6 +38,12 @@ def init_wandb(task: Dict, args, hparams: Dict):
     wandb_cfg = task.get('wandb', None) or {}
     if not wandb_cfg.get('enabled', False):
         return None
+    # Under MPI (multi-GPU) only rank 0 owns the wandb run.
+    try:
+        if jt.rank != 0:
+            return None
+    except Exception:
+        pass
     try:
         import wandb
     except ImportError:

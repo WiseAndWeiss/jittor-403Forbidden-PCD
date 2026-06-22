@@ -1,0 +1,30 @@
+mode: train
+debug: False
+# load_ckpt: experiments/sdn/checkpoint_9.pkl   # uncomment to resume
+
+components:
+  data: train_sdn
+  transform: sdn
+  system: sdn
+  model: sdn
+
+loss:
+  loss: 1.0          # total two-stage score-matching loss (Algorithm 1, line 14)
+  score_loss_t: 0.0  # logged-only: stage-1 score loss
+  score_loss_s: 0.0  # logged-only: stage-2 score loss
+
+optimizer:
+  __target__: adam
+  lr: 0.0001         # paper: Adam, initial lr 1e-4
+  weight_decay: 0.0
+
+trainer:
+  epochs: 100
+  warmup_epochs: 5
+  log_interval: 20
+
+wandb:
+  enabled: true
+  project: sdn-pcdenoise
+  name: null
+  mode: online

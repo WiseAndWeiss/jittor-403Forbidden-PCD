@@ -1,12 +1,14 @@
 from .spec import ModelSpec
 from .vm import VelocityModule
 from .asdn import ClassifyModule, ASDNModule
+from .sdn import SDNModule
 
 def get_model(model_config, **kwargs) -> ModelSpec:
     MAP = {
         'VelocityModule': VelocityModule,
         'ClassifyModule': ClassifyModule,
         'ASDNModule': ASDNModule,
+        'SDNModule': SDNModule,
     }
     __target__ = model_config['__target__']
     del model_config['__target__']

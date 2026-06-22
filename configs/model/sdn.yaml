@@ -1,0 +1,26 @@
+__target__: SDNModule
+
+# ---- score-based diffusion schedule (scaling elimination, paper Sec 3.1) ----
+num_diffusion_steps: 1000      # T
+beta_T: 2.0e-6                 # linear beta schedule end -> sigma_bar in (0, 0.03]
+
+# ---- two-stage sampling training (Algorithm 1) ----
+patch_size: 1000              # points per training patch (must match transform)
+kp_mask: 256                  # K_p highlighted points used for the loss
+lambda_weight: 0.99           # loss weight lambda (Eq. 9)
+t_min: 1                      # minimum sampled diffusion timestep
+
+# ---- network architecture (Sec 4.1) ----
+feat_dim: 128                 # DGCNN embedding / fused-feature dim
+k_graph: 32                   # DGCNN dynamic-graph k
+k_grad: 32                    # neighbours for gradient fusion (paper k=32)
+num_pos_freqs: 6              # Fourier positional-encoding bands
+time_dim: 64                  # timestep embedding dim
+grad_hidden: 128             # gradient-prediction MLP width
+num_res_blocks: 4            # residual blocks in gradient prediction (paper: 4)
+
+# ---- adaptive & iterative denoising (Algorithm 2) ----
+num_iters: 5                  # L, adaptive schedule length (paper L=5)
+predict_patch_size: 1000      # points per inference patch
+predict_seed_k: 3             # patch overlap factor (#patches = seed_k * N / M)
+predict_patch_step: 16        # patches processed per forward batch

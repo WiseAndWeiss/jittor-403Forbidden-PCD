@@ -1,0 +1,46 @@
+# Transform for the score-based diffusion denoiser.
+# NOTE: the diffusion noise is injected *inside* the model (training_step), so
+# there is deliberately NO `add_noise` augment here -- we only need clean
+# patches. `patch_size`/`kp_mask` MUST match configs/model/sdn.yaml.
+
+train_transform:
+  augments:
+    - __target__: sample
+      num_samples: 32768
+      num_vertex_samples: 1024
+
+    - __target__: normalize_pc
+
+    - __target__: linear            # rotation + scaling augmentation (paper Sec 5.1)
+      scale: [0.8, 1.2]
+      rotate_x_range: [-180, 180]
+      rotate_y_range: [-180, 180]
+      rotate_z_range: [-180, 180]
+      scale_p: 0.5
+      rotate_p: 0.5
+
+    - __target__: sdn_patch         # clean-patch init + K_p mask (Algorithm 1)
+      patch_size: 1000
+      num_patches: 4
+      kp_mask: 256
+
+validate_transform:
+  augments:
+    - __target__: sample
+      num_samples: 32768
+      num_vertex_samples: 1024
+
+    - __target__: normalize_pc
+
+    - __target__: sdn_patch
+      patch_size: 1000
+      num_patches: 1
+      kp_mask: 256
+
+predict_transform:
+  augments:
+    - __target__: sample            # no faces at predict time -> inherits noisy pc
+      num_samples: 32768
+      num_vertex_samples: 1024
+
+    - __target__: normalize_pc

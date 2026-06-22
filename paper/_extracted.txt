@@ -1,0 +1,1851 @@
+==== PAGE 1 ====
+Volume xx(20yy),Number z, pp. 1–18
+Adaptive and Iterative Point Cloud Denoising with Score-Based
+Diffusion Model
+Zhaonan Wang
+ , Manyi Li†
+ , Shiqing Xin
+ , Changhe Tu
+Shandong University
+Abstract
+Point cloud denoising task aims to recover the clean point cloud from the scanned data coupled with different levels or patterns
+of noise. The recent state-of-the-art methods often train deep neural networks to update the point locations toward the clean
+point cloud, and empirically repeat the denoising process several times in order to obtain the denoised results. It is not clear
+how to efficiently arrange the iterative denoising processes to deal with different levels or patterns of noise. In this paper, we
+propose an adaptive and iterative point cloud denoising method based on the score-based diffusion model. For a given noisy
+point cloud, we first estimate the noise variation and determine an adaptive denoising schedule with appropriate step sizes,
+then invoke the trained network iteratively to update point clouds following the adaptive schedule. To facilitate this adaptive
+and iterative denoising process, we design the network architecture and a two-stage sampling strategy for the network training
+to enable feature fusion and gradient fusion for iterative denoising. Compared to the state-of-the-art point cloud denoising
+methods, our approach obtains clean and smooth denoised point clouds, while preserving the shape boundary and details
+better. Our results not only outperform the other methods both qualitatively and quantitatively, but also are preferable on the
+synthetic dataset with different patterns of noises, as well as the real-scanned dataset.
+CCS Concepts
+•Computing methodologies→Point-based models;
+1. Introduction
+Point cloud is one of the most fundamental 3D representations in
+a majority of applications such as robotics, autonomous driving,
+manufacturing, etc, due to its simple data format and wide range of
+data sources. However, in practice, the point clouds obtained from
+different types of acquisition equipment often contain different lev-
+els or patterns of noise, caused by the sensor hardware, surface re-
+flection, depth quantization, etc. Therefore, point cloud denoising,
+which aims to recover the clean and accurate shape from the raw
+data, is often considered necessary to preprocess the scanned data
+and produce high-quality point clouds for the following usage.
+The main challenge of the point cloud denoising task lies in fil-
+tering out the coupled noise while preserving the original shape
+features, merely from the observed noisy point cloud [CP05,
+ABCO∗01, RLBG∗20]. Early works rely on heuristic assump-
+tions, such as surface smoothness [DDF17, ZWN17], local com-
+pact shape descriptors [ABCO∗01, CP05], etc, and accordingly de-
+sign geometric operators [DG10, HLZ ∗09] or optimization algo-
+rithms [SBV ∗18, ZCN∗19] for point cloud denoising. Recently,
+more and more researchers have turned to geometric deep learning
+† Corresponding Author: manyili@sdu.edu.cn
+methods to learn the shape priors in a data-driven manner. These
+works often focus on how to design a proper network architecture
+to capture the shape features and recover the underlying surface.
+The learning-based methods, such as PointCleanNet [RLBG ∗20],
+PointFilter [ZLQH20], GDPNet [PFVM20], PDFlow [MDW ∗22],
+develop and train different deep network architectures to predict
+the displacement vectors from the input points to the underlying
+surface, which have shown a superior ability to capture all kinds of
+shape features from various noisy point clouds.
+However, it is not easy to train the networks to directly estimate
+the accurate point positions for any shape in one forward process,
+which often causes over-smoothness, outlier points, surface shrink-
+age, etc. Therefore, to fully exploit the shape prior learned by the
+networks, many existing methods [HRR19, RLBG ∗20, ZLQH20,
+LH21b, CLH∗22, MDW∗22] choose to empirically repeat the de-
+noising operation several times and iteratively update the point
+clouds to obtain better results. But unfortunately, their networks
+are not trained to adapt to the iterative denoising process. In other
+words, for every denoising timestep, the network should be aware
+of the previous iterations of the point cloud to estimate the shape
+features and update the point positions with appropriate step sizes
+to achieve a more faithful point cloud. More importantly, the iter-
+ative denoising process should be determined based on the noisy
+submitted to COMPUTER GRAPHICSForum(9/2025).
+arXiv:2509.14560v1  [cs.CV]  18 Sep 2025
+==== PAGE 2 ====
+2 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+point cloud itself, rather than a general setting for all kinds of
+shapes and different levels of the coupled noise.
+In this paper, we propose an adaptive and iterative point cloud
+denoising method based on the score-based diffusion model to deal
+with varying noisy point clouds. The diffusion model [HJA20] is
+a rising generative model based on the theory of non-equilibrium
+thermodynamics [SDWMG15], which progressively destroys the
+structure of data distribution and trains a network to recover the
+data sequence in reverse order. The following score-based diffu-
+sion model [SSDK ∗21] formulates the problem from the perspec-
+tive of stochastic differential equation (SDE) and enables high-
+quality data generation from random noise with an efficient itera-
+tive sampling process. However, the conventional diffusion model
+was originally developed for the generative tasks, which aims to
+generate the data samples from random Gaussian noises. On the
+other hand, the point cloud denoising task aims to recover the un-
+derlying surface from the noisy point cloud, which is often con-
+sidered as the random noise coupled with the original point cloud.
+Therefore, to apply the diffusion model to the point cloud denois-
+ing task, the iteratively recovered point cloud should be aligned
+with the underlying surface of the input noisy point clouds, rather
+than directly shifting the distribution from Gaussian to learned data
+as done in generative tasks.
+To address this issue, we introduce a factor to maintain the mean
+of distributions of the noisy point clouds during the forward dif-
+fusion process and the reverse sampling process of the diffusion
+model. The formulations of the score-based diffusion model tai-
+lored for the point cloud denoising task are presented in Section 3,
+which provides the preliminary knowledge of our approach. Our
+methodology, as described in Section 4, includes the training strat-
+egy with two-stage sampling for the network with feature fusion
+and gradient fusion modules, as well as the inference algorithm
+with the arrangement of the adaptive denoising schedule. The fea-
+ture fusion and gradient fusion aggregate the previous information
+and neighbor contexts to preserve the shape details. The adaptive
+schedule arrangement allows us to determine proper step sizes for
+the iterative denoising process of each noisy point cloud individu-
+ally to recover the clean shape of the underlying surface.
+Our contributions are summarized as follows:
+•We propose the adaptive and iterative point cloud denoising ap-
+proach based on the score-based diffusion model. It allows us
+to determine the adaptive denoising schedule for each individual
+point cloud to iteratively and efficiently recover the clean shape.
+•We propose our network with the feature fusion and gradient
+fusion modules, as well as the training strategy with two-stage
+sampling for training the feature fusion module. It allows us to
+use the previous information and neighbor contexts to obtain a
+more accurate estimation of the shape and avoid the collapse of
+surfaces with thin structures.
+•We conducted extensive comparison experiments and ablation
+studies to validate the effectiveness and efficiency of the pro-
+posed method. Our approach outperforms the state-of-the-art
+methods both qualitatively and quantitatively, and exhibits a
+preferable generalization ability on other patterns of noises as
+well as a real-scanned dataset.
+2. Related Work
+2.1. Point Cloud Denoising
+There has been a large amount of literature on the point cloud
+denoising task [CP05, ABCO∗01, RLBG∗20, LCOLTE07, OGG09,
+SSW15,PMA ∗14,DG10,HRR19,LH20,ZLQH20,CLH ∗22]. They
+rely on different shape priors to recover the underlying surface
+from noisy input. We classify the related methods as denoising with
+heuristic shape priors and deep-learning-based denoising methods.
+Heuristic Denoising Methods.It is straightforward to assume
+the local smoothness of the underlying surface and define var-
+ious filters to remove the high-frequency noise. For example,
+the bilateral filter has been extended from images [TM98] to
+3D meshes [FDCO03] and further point clouds [DDF17] for
+the denoising purpose. However, this pre-defined operator is
+not able to discriminate the noise and shape details of com-
+plex surfaces, especially those coupled with large-scale noise
+and outliers. Some methods adopt the fitting-and-projection
+pipeline [ABCO∗03, CP05, LCOLTE07], which first approximates
+the underlying surface geometry with local compact descriptors
+[ABCO∗01,ABCO ∗03,OGG09,CP05] or sparse global representa-
+tion [SSW15, MC17], and then project the points onto the approx-
+imated surface [LCOLTE07, HLZ∗09, PMA∗14]. Their intuition is
+to make a trade-off balance between the accuracy and compactness
+of the surface via optimization. However, they are still not good at
+recovering shapes with rich small-scale shape details.
+Apart from the above general assumptions or objectives of all
+kinds of surfaces, the non-local methods [DG10, CWS ∗19] turn to
+patch-based priors due to the shape self-similarity. For each point,
+it is modified based on the other points whose neighborhood ex-
+hibits similar local patch geometry. Different surface descriptors,
+such as curvatures [WCZ ∗08], and polynomial coefficients of lo-
+cal MLS [DG10], are developed to measure the similarity of local
+patches. Recently, for a better description of the patch shape priors,
+Sarkar et al. [SBV ∗18] build a low-rank dictionary representation
+of the extracted patches, while GLR [ZCN ∗19] proposed a graph
+Laplacian regularization of a low-dimensional manifold model.
+Deep-learning-based methods.Deep neural networks are good at
+learning the data distribution as shape priors for 3D understanding
+and generation tasks. Among them, the key of point cloud denois-
+ing research [RLBG∗20,LH20,LH21b,CWL ∗22] is to develop net-
+work architectures and training strategies to learn the shape features
+of the underlying surface from scattered noisy point clouds.
+Most of the denoising networks take the noisy point cloud
+as input and regress the point-wise displacements which move
+the input point to approach the underlying surface [RLBG ∗20,
+ZLQH20, PFVM20]. These methods often require the ground-
+truth paired point clouds during training. It relies on the design
+of network architecture to extract the descriptive shape features
+and predict the displacement vectors. PointCleanNet [RLBG ∗20]
+is composed of two branches for outlier removal and displace-
+ment prediction respectively, which follow the design of Point-
+Net [QSMG16] and PCPNet [GKOM18] to be invariant to the
+ordering of the points. PointFilter [ZLQH20] first aligns the lo-
+cal patches by PCA technique and then uses an MLP network to
+predict the displacement vectors. However, the MLP networks are
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 3 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model3 of 18
+�𝜎𝜎t
+2∇ log 𝑝𝑝𝜃𝜃 𝑥𝑥𝑡𝑡 𝑥𝑥0
+𝑆𝑆𝑐𝑐𝑐𝑐𝑐𝑐𝑐𝑐 𝑉𝑉𝑐𝑐𝑐𝑐𝑃𝑃𝑐𝑐𝑐𝑐𝑈𝑈𝑈𝑈𝑑𝑑𝑐𝑐𝑐𝑐𝑈𝑈𝑈𝑈𝑈𝑈𝑈𝑈𝑈𝑈 𝑆𝑆𝑆𝑆𝑐𝑐𝑆𝑆𝑆𝑆𝑐𝑐𝑐𝑐𝑃𝑃𝑐𝑐𝑈𝑈𝑈𝑈𝑃𝑃 𝑁𝑁𝑐𝑐𝑈𝑈𝑠𝑠𝑈𝑈 𝑃𝑃𝑐𝑐𝑈𝑈𝑈𝑈𝑃𝑃 𝐶𝐶𝑈𝑈𝑐𝑐𝑆𝑆𝑑𝑑 𝐷𝐷𝑈𝑈𝑠𝑠𝑃𝑃𝑐𝑐𝑈𝑈𝑑𝑑𝑆𝑆𝑃𝑃𝑈𝑈𝑐𝑐𝑈𝑈
+ 𝐶𝐶𝑈𝑈𝑐𝑐𝑆𝑆𝑈𝑈 𝑁𝑁𝑐𝑐𝑈𝑈𝑠𝑠𝑈𝑈
+𝑥𝑥
+𝑡𝑡
+ 𝑥𝑥
+𝑇𝑇
+𝑥𝑥
+0
+ 𝑥𝑥
+𝑡𝑡
+ 1
+-
+Forward Diffusion Process
+Reverse Sampling Process
+Figure 1:Theforward diffusion process(orange arrow, from left to right) andreverse denoising process(blue arrow, from right to left)
+for 3D point clouds. The forward diffusion process progressively corrupts the clean point cloud x0 with noise at each timestep following the
+distribution q(xt |xt−1 ), while the reverse denoising process utilizes a network at each timestep to recover the point clouds in reverse order.
+not good at capturing the shape details in different levels of con-
+text. EC-Net [YLF ∗18a] presents an edge-aware point cloud con-
+solidation network for low-level noisy point clouds, with Point-
+Net++ [QYSG17] architecture for multi-scale feature embedding.
+GDPNet [PFVM20] develops a dynamic graph convolutional net-
+work to extract the hierarchical features for point cloud denoising.
+Additionally, given that the normal estimation [ZCZ∗22, ZWZ∗24]
+and point cloud denoising are often coupled together [WCZ ∗21,
+CLW∗23, LZZ∗23, YWQ∗24] and both require to capture the fine
+geometric details, some works [WCZ ∗21, LZZ∗23] train the net-
+works for the two tasks jointly to promote each other. The re-
+cent work PN-Internet [YWQ ∗24] trains two graph convolutional
+networks [WWZ ∗23] to refine the two tasks interactively by tak-
+ing advantage of the geometric dependency between them. Path-
+Net [WCN ∗24] introduces a path-selective point cloud denoising
+paradigm that dynamically selects the most appropriate denoising
+path for each point and demonstrates its potential performance.
+Although the input noisy points and ground-truth clean point
+cloud are assumed to be sampled on the same surface with and
+without noise distortion, there is not guaranteed to be a one-to-
+one mapping between the corresponding sampled points. In other
+words, the clean point cloud is just one of many implementations
+of the underlying surface [HRR19]. To address this issue, some
+methods train the network to estimate the surface itself, instead of
+the displacement vectors. TotalDenoising [HRR19] maps the point
+cloud to itself in combination with a spatial locality and a bilat-
+eral appearance prior, thus enabling unsupervised learning with-
+out needing access to clean examples. DMR [LH20] adopts the
+encoder-decoder architecture, where the encoder downsamples the
+input noisy point cloud to obtain the shape features and the decoder
+upsamples to reconstruct the shape as the denoised point cloud.
+PDFlow [MDW∗22] utilizes the normalizing flow model and dis-
+entangles the noise from the latent point representations. On the
+other hand, some methods seek to carefully conduct an iterative de-
+noising process to recover the clean point clouds. The score-based
+denoising method [LH21b,CLH ∗22] trains the network to estimate
+the gradients of the points to the underlying surface and update their
+locations along the gradients with a heuristic and fixed schedule.
+They achieve better quantitative performance by iteratively updat-
+ing the point locations, but the denoised point clouds still lose some
+small-scale shape details and exhibit a certain amount of outlier
+points. IterativePFN [dSELS∗23] incorporates the iteration in both
+the training and inference, by proposing an iterative point cloud fil-
+tering network to model the iteration process internally. Our work
+follows this line of research with the carefully designed iterative
+denoising process. Compared to these works, especially the clos-
+est work [LH21b], we arrange the adaptive denoising schedule for
+each individual point cloud, and utilize the previous information
+and neighbor contexts with our feature fusion and gradient fusion
+modules of the network for a better shape estimation.
+2.2. Diffusion Probabilistic Models
+Recently, diffusion models have emerged as a class of deep genera-
+tive models, and are widely adopted in various applications, such as
+generation, inpainting, and super-resolution of images [RDN ∗22,
+RBL∗22, FLP∗23]. Inspired by the nonequilibrium thermodynam-
+ics theory [SDWMG15], the diffusion model progressively de-
+stroys the structure of the data distribution via a forward diffu-
+sion process and then trains a network to iteratively restore the
+data distribution in the reverse sampling process. Ho et al. [HJA20]
+developed the Denoising Diffusion Probabilistic Model (DDPM)
+which is able to generate high-quality image samples. The follow-
+ing Denoising Diffusion Implicit Model (DDIM) [SME20] and the
+score-based diffusion model [SSDK∗21] further improve the speed
+of sampling with a more flexible generation process.
+There has been some research using diffusion models on image
+restoration tasks [KEES22, FLP ∗23, HTG22]. They mainly focus
+on how to utilize the generalizable image priors of diffusion mod-
+els pre-trained on large-scale datasets to solve the image restora-
+tion problem. Kawar et al. [KEES22] propose the method of De-
+noising Diffusion Restoration Models (DDRM) to solve any lin-
+ear inverse problem with variational inference. Subsequently, Fei et
+al. [FLP∗23] introduce Generative Diffusion Prior (GDP) to model
+the posterior distributions in an unsupervised sampling manner,
+while taking the degraded image as guidance. And ADIR [HTG22]
+queries K nearest neighbor images as well as the initial degraded
+image as guidance of the diffusion model. These works are relevant
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 4 ====
+4 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+to ours in terms of iteratively updating the corrupted observations
+to restore clean and high-quality data following the theory of dif-
+fusion models. However, instead of taking advantage of pre-trained
+models, we mainly focus on how to train a diffusion model from
+scratch for the point cloud denoising problem, since the irregular
+and scattered 3D point clouds lie in a completely different data do-
+main and the noise are deviations in all coordinates [HRR19].
+On the other hand, some related works utilize diffusion mod-
+els for point cloud tasks, such as shape generation [LH21a,
+ZVW∗22], shape completion [LKX ∗21], and single-view recon-
+struction [MKRV23]. They mainly adopt different network archi-
+tectures for geometric deep learning to parameterize the reverse
+sampling process of the diffusion model. Especially with the latent
+diffusion model [RBL∗22], the networks are able to learn the distri-
+bution of latent representations and generate 3D shapes from ran-
+domly sampled noises. In contrast to the content generation prob-
+lems, our task is to recover the clean and accurate shape while re-
+specting the observed point clouds coupled with different levels of
+noise. The key is to determine the adaptive denoising schedule w.r.t.
+the noise variance while preserving the original shape details.
+3. Score-based Diffusion for Point Cloud Denoising
+The score-based diffusion model for the point cloud denoising task
+contains a forward diffusion process and a reverse sampling pro-
+cess, as in Figure 1. The former defines a Markov chain of diffusion
+steps to progressively corrupt the original clean data with random
+Gaussian noise, while the latter learns to reverse the diffusion pro-
+cess by training a network to estimate the noise at each timestep.
+Once trained, given a noisy point cloud, the network is used to re-
+duce the noise iteratively and finally restore the clean point cloud.
+It is worth noting that the conventional diffusion model is devel-
+oped for the generative tasks, which aim to generate the data sam-
+ples from random Gaussian noise. However, in our problem, the
+point cloud denoising task aims to recover the underlying surface
+from the noisy point cloud, which is often considered as the ran-
+dom noise coupled with the original point cloud. The noisy point
+clouds should maintain the mean of the distribution during the dif-
+fusion process and reverse sampling process. Otherwise, it would
+cause shifting positions of point clouds during the iterative process,
+which, when taken as the network’s input, would heavily affect the
+network’s ability to estimate the shape of the underlying surface.
+In this section, we present the formulation of the score-based
+diffusion model for the point cloud denoising task. The details of
+the derivations are provided in the appendix.
+3.1. Score-based Diffusion with Scaling Elimination
+Forward Diffusion Process.Starting from the clean point cloud
+x0, the diffusion process aims to parameterize the distribution
+of noisy point cloudx t at timestept, i.e.q(x t |x0). According to
+DDPM [HJA20], it defines a Markov chain where a small amount
+of noise is injected at each timestep followingx t =
+p
+1−β txt−1 +p
+βtzt ,zt ∼N(0,I), with{β t }T
+t=1 being a linear variance schedule
+to arrange the noise injection during the diffusion process. The dis-
+tribution is then derived asq(xt |x0) =N(xt; √ ¯αtx0,(1− ¯αt )I), with
+αt =1−β t and ¯αt = Qt
+s=1 αs. Therefore, we can sample the noisy
+point cloud asx t = √ ¯αtx0 + √1− ¯αtz,z∼N(0,I).
+However, the above formulation in the conventional diffusion
+model requires scaling the original point cloudx 0 with √ ¯αt, which
+are inconsistent for the noisy point clouds at different timesteps.
+The shifting among noisy point clouds, i.e. the input points of the
+noise prediction network, would heavily affect the network’s ability
+in the reverse process. To maintain the distribution of point clouds,
+we should rewrite the sampling of noisy point clouds in the form
+ofx t =x 0 + ¯σtz, where ¯σt represents the total noise injected to the
+original point cloud until the timestept. So we parameterize the
+distribution of noisy point clouds as
+q(xt |x0) =N(xt;x 0,(1− ¯αt )/ ¯αtI).(1)
+We also need to reformulate the Markov chain to match the noisy
+point cloud distribution (Eq 1). The joint distribution becomes
+q(x1:T |x0) =
+TY
+t=1
+q(xt |xt−1 ),q(xt |xt−1 ) =N(xt;xt−1 ,β t / ¯αtI).
+(2)
+In this way, the above formulation avoids the shifting issue by
+eliminating the scaling factor √ ¯αt. In addition, it provides the cor-
+respondence between the linear schedule{β t }T
+t=1 and the noise
+variance ¯σt of the noisy point cloudx t. That is, at timestept, the
+current point cloudx t−1 is corrupted with noise varianceσ 2t =
+βt / ¯αt to obtainx t. Compared to the original clean point cloudx 0,
+we have the total noise variance
+¯σ 2
+t = (1−¯αt )/ ¯αt , ¯αt =
+tY
+s=1
+αs,α t =1−β t .(3)
+This correspondence enables us to determine an adaptive and iter-
+ative denoising schedule{β t }T
+t=1 by estimating the noise variance
+of a given noisy point cloud, as described in Section 4.3.
+Reverse Sampling Process.The sampling process aims to recover
+point cloud sequencex 0:T ={x 0, . . . ,xT }in a reverse order, where
+x0 represents the clean point cloud lying on the underlying surface.
+The reverse process is also parameterized as a Markov chain
+pθ (x0:T ) =p(xT )
+TY
+t=1
+pθ (xt−1 |xt ),
+pθ (xt−∆ |xt ) =N(xt−∆;µ θ (xt ,∆),Σ),
+(4)
+whereµ θ is estimated by a denoising network with parametersθ
+and the varianceΣcan be computed in closed form w.r.t. the ar-
+ranged schedule{β t }T
+t=1. The above formulation with∆∈[1,t]al-
+lows us to estimate the noisy point cloud at any previous timestep
+beforet. Based on Bayes’ theorem and parameterization, we have
+µθ =x t + (
+s
+1− ¯αt−∆ (1+Σ η )
+¯αt−∆
+−
+r
+1− ¯αt
+¯αt
+)zθ (xt ), (5)
+wherez θ (xt )is the estimated noise from the network at timestept
+andΣ η =ηΣis controlled by the variableη∈[0,1].
+We further define the score vectors θ (xt )as gradient of its log-
+likelihood function− ¯σtzθ ∝ ¯σ 2t ∇x log[p θ (xt |x0)] =sθ (xt ), point-
+ing fromx t to underlying surface. Then the sampling process can
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 5 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model5 of 18
+𝐹$
+Fusion
+ mlp
+=
+mlp
+e
++
+*
+𝛽
+.
+,
+ 𝛽
+!
+𝐸𝑞
+.
+7
+…
+𝑥
+.
+,
+ 𝑥
+!
+Schedule	
+Estimation
+Feature
+Extraction
+Gradient
+Prediction
+ …
+…
+ …
+𝛽
+!
+)
+-
+𝛽
+#
+𝛽
+!
+*
+-
+̂
+𝑠
+U
+𝑥
+1
+|
+𝑥
+V
+W
+Gradient	
+Fusion
+𝑥
+!
+)
+-
+ 𝑥
+#
+Feature	Fusion
+ℰ
+(
+𝑥
+(
+)
+ℰ
+(
+𝑥
++
+*
+)
+ "
+'
+(
+ 
+𝑥
+"
+𝐹
+(
+Feature
+Extraction 𝑆𝑐𝑜𝑟𝑒𝑉𝑒𝑐𝑡𝑜𝑟𝑃𝑜𝑖𝑛𝑡𝐶𝑙𝑜𝑢𝑑𝐷𝑖𝑠𝑡𝑟𝑖𝑏𝑢𝑡𝑖𝑜𝑛
+𝐶𝑙𝑒𝑎𝑛𝑁𝑜𝑖𝑠𝑦𝑈𝑛𝑑𝑒𝑟𝑙𝑦𝑖𝑛𝑔𝑆𝑢𝑟𝑓𝑎𝑐𝑒𝑃𝑜𝑖𝑛𝑡
+Figure 2:The iterative denoising pipeline of the proposed method.Given a noisy point cloud, our method first estimates its adaptive
+schedule{β t } ˆτ which controls the amount of noise removed at each timestep. During the iterative denoising process, at each timestep, we
+estimate the shape featureE(x t )and predict the score vectorsˆs θ (xt |x ˆτ )at the point locations. The score vectors are used to update the
+point cloud with Equation 7 following the adaptive schedule until obtaining the denoised point cloud x0. Note that we use feature fusion and
+gradient fusion while invoking the trained networks to preserve the detailed shape features.
+be expressed as
+xt−∆ =x t + (1−
+s
+(1− ¯αt−∆ (1+Σ η )) ¯αt
+(1− ¯αt ) ¯αt−∆
+)sθ (xt )
+| {z }
+µθ
++z∼N(0,Σ ηI)| {z }
+random noise
+.
+(6)
+Note that the reverse sampling process becomes the generative
+DDPM [HJA20] withΣ= ¯σ 2
+t−∆ ( ¯αt−∆ − ¯αt )/((1− ¯αt ) ¯αt−∆ )and
+η=1, where the random noise sampling may blur the detailed
+shape feature. Instead, we perform deterministic sampling by set-
+tingη=0. The reverse sampling process (Eq 6) finally becomes
+xt−∆ =x t + (1−
+s
+(1− ¯αt−∆ ) ¯αt
+(1− ¯αt ) ¯αt−∆
+)sθ (xt ).(7)
+Therefore, we only need to train a network to predict the score vec-
+tors, i.e. the gradients towards the underlying surface, and itera-
+tively update the point locations based on Eq 7. The advantages
+brought by the score-based diffusion model are that the network
+can predict better score vectors at the low-density regions to allevi-
+ate outliers in the denoised point clouds and it allows us to flexibly
+arrange the iterative denoising schedule during sampling process.
+3.2. Training Objective
+Intuitively, the training is to minimize the negative log-likelihood
+of the denoised point cloud. We define the trainable objectiveLas:
+min
+θ
+Eq(x0)[−logp θ (x0)]
+≤min
+θ
+Eq
+ X
+t>1,∆
+DKL (q(xt−∆ |xt ,x 0)||p θ (xt−∆ |xt ))
+
++D KL (q(xT |x0)||p(x T ))−logp θ (x0|x1)
+=:L(x 0:T ,{βt }T
+t=1 ).
+(8)
+To make the training simpler and more efficient, following
+[HJA20], we randomly choose the diffusion timesteps in the loss
+function. In addition, we define a weighting term related to ¯σt, i.e.
+the total scale of noise coupled with the clean point cloud, to en-
+courage the network to focus more on the denoising performance
+near the underlying surface. In other words, the weighting term has
+a larger value whentis small. Our loss function is
+L=E q,t>0
+
+
+ 1−λ
+¯σt
++λ
+
+sθ (xt )−S(x t )
+
+
+2
+2
+
+,(9)
+whereλis the parameter to control the weighting term,s θ (xt )is
+the network-estimated score vector whileS(x t )is the ground truth
+score vector. We useλ=0.99 in all the experiments.
+4. Method
+Our approach includes training the network with feature fusion and
+gradient fusion modules, as well as adaptive and iterative denois-
+ing during inference. In this section, we first introduce the network
+architecture and the details of each network module in Secion 4.1,
+then the training algorithm in Section 4.2, and the inference algo-
+rithm in Section 4.3. Figure 2 illustrates the iterative denoising pro-
+cess during inference with the trained network.
+4.1. Network Architecture
+Our denoising network takes a noisy point cloudxt ={x t
+i}n
+i=1 as in-
+put, and predicts the score vector for each of the points, i.e. ˆsθ (xt ).
+The network is sequentially composed of a feature extraction mod-
+uleEto extract the point-wise features, a feature fusion moduleF
+to integrate the point features of the current point cloud and those
+of the original noisy point cloud, a gradient prediction moduleGto
+predict the points’ gradient vectors based on their correlated point
+features, and a gradient fusion moduleξto fuse the multiple ver-
+sions of the predicted gradients (based on the features of different
+correlated points) into the predicted score vectors.
+Thefeature extraction moduleEis implemented as a dynamic
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 6 ====
+6 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+graph convolutional neural network (DGCNN) [WSL ∗19] to deal
+with the point clouds with various shapes. The network contains
+a stack of dynamic graph convolutional layers, which search the
+neighbors of each point in terms of feature similarity and aggregate
+the context information to obtain the multi-scale point features. We
+useE(x t )to denote the extracted point features for point cloudx t.
+Thefeature fusion moduleF, designed to blend the coarse shape
+information ofx T with the detail feature of the recoveredx t, fuses
+the point features of the current iterationE(x t )and those of the
+input point cloudE(x T )in a way that leverages the timestep and
+current position:
+Ft =F(x t , t
+T ,E(x t ),E(x T )).(10)
+Specifically, we first fuse the positional encoding ofx t and the em-
+bedding of relative timestep t
+T ase. The featureeis then fused
+withE(x t )to obtain the weight vectore t, and withE(x T )to ob-
+taine T . We finally fuse all of them to form the fused feature
+Ft =MLP(E(x t )·e t +E(x T )·e T ), with·represents element-wise
+multiplication. All the above fusions are conducted with corre-
+sponding 3-layer MLP networks.
+Thegradient prediction moduleGpredicts the gradient vector
+of an arbitrary pointvsupported by a correlated point-wise feature
+Ft,i within the local field ofv, and the importance weight indicating
+the effectiveness of theF t,i atv. This module is implemented as an
+MLP network composed of four residual blocks. Taking the arbi-
+trary pointvand the point-wise featureF t,i with its corresponding
+pointx t
+i as input, we first transformvto the relative coordinate for
+normalization purpose, i.e.v−x t
+i, and input it to the network:
+gv,i,w v,i =G(v−x t
+i,Ft,i ),(11)
+whereg v,i andw v,i denote the predicted gradient vector and the im-
+portance weight, respectively. During both the training and testing,
+we samplevfrom the noisy point cloudx t, and query the neighbor
+pointx t
+i from the same point cloud.
+Considering that a pointvinvolves many different points within
+its local neighborhood, we queryk=32 nearest neighbors as dif-
+ferentx t
+i, thus producing multiple versions of the gradient at the lo-
+cationvbased on different point-wise featuresF t,i. We further use
+a gradient fusion module to obtain a reasonable and accurate gradi-
+ent estimation. A simple average fusion sometimes causes collapse,
+especially when the underlying surface contains thin structures. We
+define a weighted gradient fusion function based on the important
+weights predicted by the gradient prediction module.
+Ourgradient fusion functionξis defined as a weighted function:
+ξ(v|x t ,x T ) =
+kX
+i=1
+gv,i ·SoftMax({w v,i})i.(12)
+where SoftMax(·)filters the uncertain gradient vectors indicated by
+important weights.·represents element-wise multiplication. It pre-
+vents the thin structures from collapsing into degenerated surfaces.
+Finally, we can obtain the predicted score vector for each of the
+points
+ˆsθ (xt |xT ) ={ξ(v|xt ,x T )|v∈x t }n.(13)
+Algorithm 1Training Algorithm
+Input:The ground-truth clean point cloudX; the training schedule
+{βt }T
+t=1; the length of the training scheduleT.
+Initialize:The feature extraction moduleE; the feature fusion mod-
+uleF; the gradient estimation moduleG.
+1:repeat
+——————– Patch Initialization —————————–
+2:Sample a random pointp∈X
+3:Initialize the patchx 0 ←kNN(p,X)centered atp
+4:Initialize patch maskMto highlightK p nearest points ofp
+————- Stage 1: sampling and processx t ——————
+5:t∼Uniform({t min, . . . ,T}),ϵ∼N(0,¯σ 2t I)
+6:Construct a noisy point cloudx t ←x 0 +ϵ
+7:Extract the fused featureF t ←F(x t , t
+t ,E(x t ),E(x t ))
+8:Predict the score vectors ˆs θ (xt |xt )▷Eq. 12
+————- Stage 2: sampling and processx t−∆ ————–
+9:∆∼Uniform({1, . . . ,t})
+10:Update the noisy point cloud▷Eq. 7
+xt−∆ ←x t + (1−
+q
+(1− ¯αt−∆ ) ¯αt
+(1− ¯αt ) ¯αt−∆
+)(Mˆsθ (xt |xt )) +¬MS(xt ))
+11:Extract fused featureF t−∆ ←F(x t−∆ , t−∆
+t ,E(x t−∆ ),E(x t ))
+12:Predict the score vectors ˆs θ (xt−∆ |xt )▷Eq. 12
+—————————- Loss ————————————–
+13:Compute GT score vectorsS(x t )andS(x t−∆ )▷Eq. 14
+14:Update parameters with
+L←E
+h
+
+  1−λ
+¯σt
++λ
+
+M
+ 
+ˆsθ (xt |xt )−S(x t )
+
+
+2
+2
+i
++E
+h
+
+  1−λ
+¯σt−∆
++λ
+
+M
+ 
+ˆsθ (xt−∆ |xt )−S(x t−∆ )
+
+
+2
+2
+i
+15:untilconverged
+4.2. Training Algorithm
+We develop a two-stage sampling and patch-wise training algo-
+rithm for our network. On one hand, training on small patches
+rather than the entire point clouds improves the network’s gener-
+alization ability, especially when the training set only contains a
+few point clouds. On the other hand, the training of the diffusion
+model often samples the noisy data at a random timestep of the dif-
+fusion process for each training iteration. Since our feature fusion
+module requires the point features of both the current and original
+noisy point cloud, the two-stage sampling strategy aims to obtain
+the two noisy point clouds at one training iteration.
+Algorithm 1 describes our two-stage sampling and patch-wise
+training algorithm. Given the ground-truth clean point cloudX, in
+each iteration of the training, we conduct the patch initialization
+then the two-stage sampling to compute the loss. Specifically, to
+initialize a patch, we randomly crop a local 1000-point patch from
+the entire point cloud asx0, and make the point-wise maskMwhich
+highlightsK p =256 points within a smaller region around the patch
+center. The maskMis used to regularize the loss, i.e. only the loss
+for points highlighted by the mask is used for the training, to ensure
+that every point has sufficient local neighborhood information for
+the gradient prediction and gradient fusion in this training iteration.
+After the patch initialization is the two-stage sampling. In the
+first stage, it samples the noisy point cloudx t at timesteptand
+predicts the score vectors ˆs θ (xt |xt ). In the second stage, it sam-
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 7 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model7 of 18
+ples another noisy point cloudx t−∆ by updating the positions of
+xt with ˆsθ (xt |xt ), then predicts the corresponding score vectors
+ˆsθ (xt−∆ |xt ). Note that the goal of sampling point cloudsxt andx t−∆
+is to imitate an iteration step during inference, involving both an
+original and a current noisy point cloud. It allows us to learn the
+feature fusion module of the network during training.
+The loss function, i.e. 14th line in Algorithm 1, is defined as
+the MSE loss between the predicted score vectors ˆs θ (xt |xt )(and
+ˆsθ (xt−∆ |xt )) and the ground-truth score vectorsS(xt )(andS(x t−∆ )).
+Following [LH21b, CLH ∗22], we use the displacement vectors
+from the point locationsx t to their nearest neighbor in the clean
+point cloudx 0 to approximate the ground-truth score vectorsS(x t )
+pointing fromx t to the underlying surface:
+S(xt ) =NN(xt ,x 0)−x t ,(14)
+whereNN(x t ,x 0)returns the nearest neighbor inx 0 for each point
+inx t. Note that although the exact score vector can be directly com-
+puted w.r.t. the clean meshes in the dataset, the adopted approxima-
+tion significantly reduces the training time per iteration and intro-
+duces negligible inaccuracy in our experiments.
+To summarize, we only need the clean point clouds as the train-
+ing set and sample the noisy patches during training to compute the
+scores as ground-truth. We assume the noise variance does not ex-
+ceed 3% in our experiments, i.e. ¯σt ≤3%. And we set the number
+of diffusion steps asT=1000 during training in order to learn the
+score distribution at low-density regions. Therefore we have the
+linear schedule{β t }(β 0 =0) withβ T =2e −6 in order to satisfy
+¯σt ∈(0,0.03].
+4.3. Adaptive and Iterative Denoising Algorithm
+After training, given a noisy point cloudX, we estimate the noise
+variance, determine an adaptive denoising schedule to iteratively
+update point locations, and finally restore the clean point cloud
+ˆX. The detailed algorithm is presented in Algorithm 2. Following
+SBD [LH21b] and IterPFN [dSELS∗23], we use farthest point sam-
+pling to constructRoverlapping patches, i.e.{X r}R.
+Adaptive Schedule Arrangement.We use the trained denoising
+network to estimate the noise variance of the input point cloudX.
+The network predicts the scores ˆsθ (X|X), whose variance provides
+a primary guess of the noise variance
+¯σ 2 =Var
+ 
+||ˆsθ (X|X)||
+
+,(15)
+where we directly concatenate the estimated score vectors for all
+the patches as ˆsθ (X|X).
+Then our adaptive schedule is to find a sub-sequence from
+{β0, . . . ,βT }, denoted as{β 0, . . . ,βˆτ }, so that the corresponding
+noise variance ¯σ 2
+ˆτ based on Equation 3 match with ¯σ 2 estimated
+with Equation 15. However, there’s no closed-form solution to
+solveβ ˆτ based on ¯σ 2
+ˆτ . So we use the linear search algorithm:
+β ˆτ =argmin
+β ˆτ ∈{βt }T
+ ¯σ 2
+ˆτ − ¯σ 2.(16)
+Note thatβ ˆτ is selected from the sequence{β 0, . . . ,βT }, which is
+used during the training. This search terminates when finding the ˆτ
+that best satisfies the search objective.
+Algorithm 2Adaptive and Iterative Denoising Algorithm
+Input:The noisy point cloudX, the training schedule{β t }T , the
+length of the adaptive scheduleL; network modulesE,F,Gwith
+trained weights from Algorithm 1.
+1:ConstructRoverlapping patches{X r}R using FPS
+————— Adaptive Schedule Arrangement ——————–
+2:Predict primary noise variance ¯σ 2 of inputX▷Eq. 15
+3:Estimate schedule{β t } ˆτ ▷Eq. 16
+—————- Patch-wise Iterative Denoising ———————
+4:forr=1 toRdo
+5:Initializex ˆτ ←X r,∆= ˆτ/L
+6:Extract featureE(x ˆτ )ofx ˆτ
+7:forl=Lto 1do
+8:t←Round(l·∆)▷tandt−∆are rounded to integers.
+9:Extract featureE(x t )ofx t
+10:Compute fused featureF t ←F(x t , t
+ˆτ ,E(x t ),E(x ˆτ ))
+11:Predict the score vectors ˆs θ (xt |x ˆτ )▷Eq. 12
+12:Update the noisy point cloud▷Eq. 7
+xt−∆ ←x t + (1−
+q
+(1− ¯αt−∆ ) ¯αt
+(1− ¯αt ) ¯αt−∆
+)ˆsθ (xt |x ˆτ )
+13:end for
+14: ˆXr ← {x0
+i }n
+i=1
+15:end for
+16:StitchRoutput patches{ ˆXr}R as point cloud ˆX
+17:Output:The restored point cloud ˆX.
+After obtainingβ ˆτ and the corresponding ˆτ, we linearly inter-
+polate ˆτwith∆= ˆτ/Land compute their corresponding schedule,
+i.e. anL-element sequence{β ∗
+0 , . . . ,β∗
+ˆτ }, whereLis the number of
+iteration in the following denoising algorithm. To further align the
+schedules used during training and inference, we replace each ele-
+ment with the closest one in the training schedule, thus obtaining
+{β0, . . . ,βˆτ }. We empirically set the length of the adaptive denois-
+ing scheduleL=5 for efficiency purposes.
+Iterative Denoising Algorithm.After determining the adaptive
+schedule, we conduct the iterative denoising process for each patch
+separately, following the same adaptive schedule. The algorithm
+takes a patch of noisy point cloudX r as input and outputs the re-
+stored point cloud ˆXr for this patch. Finally, to stitch the restored
+patches{ ˆXr}R together, we select each point’s most reliable po-
+sition from the involved patches. That is, if a point is covered by
+multiple patches, we select the patch where this point is closer to
+the patch center and use the corresponding restored position to form
+the denoised point cloud for the entire shape, i.e. ˆX.
+5. Experiments
+5.1. Setup
+Datasets.Following the recent related works [YLF ∗18b, LH21b],
+we use the training set proposed by PU-Net [ZLQH20] which in-
+cludes 40 meshes. The clean point clouds are obtained with the
+Poisson disk sampling algorithm and are normalized into a unit
+sphere. Point cloud data augmentation such as random rotation and
+scaling is adopted during training to reduce the overfitting problem.
+Note that our network processes the patch-wise point clouds which
+enable the generalization to all kinds of shapes.
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 8 ====
+8 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+Jet GLR PCN DMR PF PCDNF SBD PSR IterPFN PathNet Ours
+Casting
+Quadric
+M1486
+Box Union
+Figure 3:Visual comparisons of denoising methods under3%Gaussian noise.Points colored orange are farther away from the ground
+truth surface and blue is closer. The results are denoised from the noisy input with 50k points.
+Jet GLR PCN DMR PF PCDNF SBD PSR IterPFN PathNet Ours
+Casting
+Quadric
+Box Union
+M1486
+Figure 4:Visual comparisons of denoising methods under1%Gaussian noise.Points colored orange are farther away from the ground
+truth surface and blue is closer. The results are denoised from the noisy input with 50k points.
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 9 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model9 of 18
+For testing, we compare with the state-of-the-art methods
+on the synthetic test sets of PU-Net [YLF ∗18b, LH21b], PC-
+Net [RLBG∗20] and MOD-Net [HXW ∗22], which contain 20, 10,
+10 meshes respectively. The MOD-Net test set contains meshes
+with rich geometric details which helps us to examine the detail-
+preserving ability of different methods. We remove the meshes in
+the MOD test set which are included in the training set and the other
+test sets for the quantitative evaluation. In addition, we also exam-
+ine the generalization ability on the real-scanned point clouds from
+the Paris-rue-Madame Database [SMGD14], as well as the point
+clouds coupled with different patterns of noise.
+Metric.We employ two metrics commonly adopted in pre-
+vious works for the quantitative evaluation: Chamfer distance
+(CD) [FSG17] and point-to-mesh distance (P2M) [RRN∗20].
+Implementation Details.We implement our method with PyTorch
+on NVIDIA GeForce RTX 4090 GPU. In the training stage, we
+adopt Adam optimizer with an initial learning rate 1e−4.
+5.2. Comparision
+We compare our method with the representative denoising
+methods, including optimization-based denoisers (Jet [CP05],
+GLR [ZCN ∗19]) and the recent deep-learning-based de-
+noisers (PCN [RLBG ∗20], DMR [LH20], PF [ZLQH20],
+PCDNF [LZZ ∗23], SBD [LH21b], PSR [CLH ∗22]), Path-
+Net [WCN∗24] and IterPFN [dSELS ∗23]. For those related works
+that share the same train-test split, i.e. SBD, PSR and IterPFN, we
+use their pre-trained checkpoints of the network for the comparison
+experiments. PCN, DMR, PF, PCDNF, and PathNet are re-trained
+with our training set using their released code. We randomly
+sample 10K, 50K, and 100K points from each surface. Then, the
+clean point clouds are perturbed by isotropic Gaussian noise with
+standard deviation 1%, 2%, 3% of the bounding sphere’s radius.
+These obtained noisy point clouds are saved as the input of all the
+methods for a fair comparison.
+Qualitative Performance.Our method outperforms the other re-
+lated methods in terms of the visual quality of the denoised point
+clouds. Figure 3 shows the denoising results of different meth-
+ods on the point clouds with 3% noise. The relatively large-scale
+noise makes it difficult to estimate the accurate underlying surface
+so many of these methods produce point clouds with remaining
+outliers and over-smoothed surfaces. Recent methods, such as PF,
+SBD, PSR, perform relatively clean results, but cannot deal with
+the shapes with thin structures such as the Casting model in the first
+row, and sharp features such as the Box Union model in the third
+row. By contrast, our method consistently produces high-quality
+denoised point clouds while maintaining the shape feature.
+We also present the results of these shapes with small-scale noise
+(1%) in Figure 4. The optimization-based methods, i.e. Jet and
+GLR, produce highly over-smoothed results with missing shape de-
+tails and sharp features, which can be clearly observed in the Box
+Union example in the fourth row. The results of PCN and DMR
+often have remaining noise and cause large shape errors compared
+to the ground-truth clean point cloud. IterPFN removes noise on
+the surface well but causes shrinkage when dealing with curved
+thin structures such as the Casting model in the first row. The other
+Noise  0.5%Noise  1%
+Noisy
+ SBD
+ PSR
+ IterPFN
+ Ours
+2.58
+ 2.18
+ 3.67
+ 1.55
+6.26
+7.83
+ 5.23
+ 10.5
+ 3.25
+10.4
+Figure 5:Visual comparisons on complex Mobius model under
+0.5%and1%Gaussian noise.We show the P2M (×10 5) error of
+each result where red represents larger error values.
+recent methods, including PF, PCDNF, SBD, PSR, and PathNet,
+obtain good denoised results with small shape errors, but have re-
+maining noise on the plane surface such as the Box Union model in
+the third row, or over-smoothed surfaces at the sharp edges and de-
+tailed shapes such as the Quadric model in the last row and M1486
+in the second row. By contrast, our method is comparably better at
+preserving shape details and sharp features.
+In Figure 5, we compare the iterative methods (SBD, PSR,
+IterPFN) in the denoised results of a complex shape with thin struc-
+tures, coupled with 0.5% and 1%. SBD and IterPFN produces de-
+noised results with obvious shrinkage, which causes even larger
+shape errors than the input noisy point cloud. Comparing PSR and
+ours, we can produce smoother and cleaner results that preserve the
+complex shape details, while achieving smaller shape errors.
+Quantitative Performance.Table 1 shows the quantitative eval-
+uation of all the methods on the three synthetic test sets. Each
+method uses consistent hyper-parameters including trained network
+weights to produce the results of noisy point clouds with different
+densities and noise scales. Our method outperforms previous deep-
+learning-based methods and optimization-based methods quanti-
+tatively. The evaluation shows that our adaptive and iterative de-
+noising approach consistently produces accurate clean point clouds
+with varying point densities and noise variation.
+5.3. Generalization
+More Noise Patterns.To test the generalization ability of our
+method, we use the point clouds corrupted by other noise pat-
+terns as input and compare with some other methods (GLR, SBD,
+PSR, IterPFN) that perform well in the comparison experiments.
+We consider the noise patterns including Laplace noise (LA), dis-
+crete noise (DC), anisotropic Gaussian noise (AG), uni-directional
+Gaussian noise (UG) and uniform noise (UF). Note that none of the
+above methods have been trained on these noise patterns.
+Figure 7 and Table 2 report the qualitative and quantitative eval-
+uations. Although we have tweaked the hyper-parameters of GLR
+carefully, they still result in dramatically decreasing performance
+on the Laplacian noise. Similarly, the results of SBD also have
+remaining outliers around the denoised point cloud. On the other
+hand, although the PSR, IterPFN and ours produce visually similar
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 10 ====
+10 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+Table 1:Quantitative evaluation of different methods on synthetic test sets.CD and P2M are multiplied by10 4 and10 5, respectively.
+# Metrics CD (10 4) P2M (105)Noise 1% 2% 3% 1% 2% 3%
+Testset Model 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K
+PU
+[YLF∗18b]
+Jet 3.19 0.98 0.70 4.39 1.36 0.99 5.43 2.17 1.58 10.4 3.39 3.24 16.7 6.04 5.39 24.1 12.3 10.2GLR 2.97 0.67 0.42 3.55 1.44 1.51 4.71 2.43 2.79 10.7 1.66 1.33 11.6 7.33 10.0 20.8 15.4 21.1
+PCN 3.30 0.97 0.56 6.26 1.24 0.75 10.1 1.85 1.27 9.87 3.01 1.82 29.3 4.53 3.08 61.4 8.98 7.12DMR 4.44 1.18 0.88 4.78 1.47 1.14 5.51 2.17 1.79 16.8 4.79 4.65 19.6 7.20 6.87 25.6 13.1 12.5PF 3.41 0.74 0.46 5.51 1.26 0.87 7.39 1.68 1.24 10.9 1.56 1.21 25.0 5.37 4.29 40.8 8.15 7.06PCDNF 8.25 0.76 0.40 9.11 1.22 0.66 10.0 1.61 0.92 51.3 1.71 0.84 54.6 4.97 2.60 61.6 8.02 4.58SBD 2.52 0.71 0.42 3.68 1.29 1.04 4.71 1.93 1.75 4.63 1.50 1.12 10.7 5.66 5.78 19.4 10.4 10.8PSR 2.42 0.65 0.37 3.44 1.03 0.62 4.17 1.40 1.06 3.31 0.75 0.49 8.17 3.30 2.11 13.4 5.82 4.93IterPFN 2.050.60 0.31 3.04 0.80 0.55 4.23 1.97 2.58 2.18 0.59 0.30 5.55 1.82 1.80 13.7 10.1 16.8PathNet 2.79 0.68 0.38 3.84 1.11 0.98 4.64 2.37 3.26 7.30 1.05 0.67 12.0 3.83 4.87 17.6 13.2 22.9
+Ours2.09 0.59 0.30 2.99 0.78 0.50 3.62 1.181.09 2.04 0.51 0.29 5.09 1.68 1.44 9.41 4.455.51
+PC
+[RLBG∗20]
+Jet 3.53 1.21 0.83 5.59 1.79 1.28 7.21 2.63 1.84 10.1 2.58 1.98 15.6 4.56 3.49 22.2 6.85 4.60GLR 4.36 1.01 0.51 5.18 1.91 1.66 7.46 3.23 3.08 13.9 1.89 0.73 10.9 3.67 3.06 19.2 7.05 8.36
+PCN 3.68 1.18 0.68 7.99 1.63 0.92 13.1 2.52 1.47 11.7 2.40 1.32 28.0 3.86 1.95 52.9 7.02 3.45DMR 6.52 1.59 1.05 6.94 1.89 13.1 7.71 2.68 2.03 21.5 3.89 2.46 22.1 4.63 3.07 24.5 7.26 5.72PF 4.43 1.03 0.67 7.55 1.64 1.04 9.84 2.41 1.44 19.2 2.06 1.31 26.3 4.23 2.35 39.3 7.54 3.48PCDNF 11.6 1.30 0.58 13.2 1.89 0.90 14.4 2.46 1.24 60.2 3.42 0.95 64.3 5.69 1.93 66.9 7.88 2.72SBD 3.37 1.07 0.57 5.13 1.66 1.11 6.78 2.49 1.91 8.30 1.77 0.81 11.9 3.54 2.51 19.4 6.57 5.13PSR 3.14 0.99 0.51 4.92 1.55 0.85 6.14 2.12 1.27 10.1 1.67 0.65 13.8 3.84 1.85 17.8 5.92 2.88IterPFN 2.62 0.91 0.46 4.43 1.25 0.70 6.02 2.54 2.23 6.98 1.39 0.61 10.1 2.37 1.10 15.6 7.15 5.87PathNet 3.35 0.98 0.51 5.13 1.46 0.99 6.35 2.60 2.87 9.74 1.74 0.72 13.6 3.06 1.86 18.2 6.25 8.03
+Ours 2.59 0.89 0.43 4.41 1.24 0.67 5.56 1.93 1.23 6.33 1.06 0.33 9.43 2.11 0.82 13.2 4.21 2.13
+MOD
+[HXW∗22]
+Jet 3.47 1.14 0.84 5.36 1.80 1.42 6.90 2.72 2.07 6.94 1.52 1.31 9.81 2.68 1.75 11.6 2.77 2.27GLR 3.72 0.88 0.51 4.64 1.69 1.61 6.35 1.85 2.95 7.38 0.73 0.34 6.09 1.18 1.14 9.18 2.17 2.22
+PCN 3.34 1.05 0.63 7.23 1.52 0.94 12.1 2.42 1.60 3.64 0.91 0.48 8.12 1.81 1.01 13.0 2.92 1.59DMR 6.09 1.50 1.11 6.55 1.90 1.46 7.38 2.73 2.24 8.29 1.14 0.80 8.53 1.60 1.15 9.22 2.19 1.67PF 3.82 1.02 0.67 6.50 1.65 1.07 9.31 2.55 1.56 6.24 1.18 0.82 12.3 2.69 1.85 20.4 5.20 3.32PCDNF 9.31 1.10 0.55 10.8 1.80 0.91 12.2 2.54 1.38 11.9 1.10 0.37 12.5 2.66 0.97 13.9 4.38 1.75SBD 3.09 0.96 0.57 4.75 1.64 1.22 6.52 2.56 2.20 4.23 0.73 0.37 5.46 1.40 0.99 9.50 2.71 2.04PSR 2.62 0.81 0.47 4.28 1.33 0.86 5.52 2.01 1.43 3.90 0.51 0.28 6.12 1.81 1.12 8.16 3.21 1.71IterPFN 2.41 0.77 0.44 3.96 1.17 0.76 5.65 2.50 2.72 3.05 0.46 0.25 4.82 1.16 0.71 5.83 1.84 1.95PathNet 3.16 0.85 0.48 4.81 1.41 1.10 6.08 2.68 3.41 5.67 0.71 0.33 8.09 1.44 0.90 10.2 2.20 2.58
+Ours 2.35 0.75 0.42 3.90 1.15 0.73 5.06 1.771.41 2.87 0.39 0.19 4.38 0.87 0.49 5.63 1.45 1.27
+results, our method exhibits much better performance in quantita-
+tive evaluation. It demonstrates the superiority of our adaptive and
+iterative denoising strategy in dealing with various noise patterns.
+Real-Scan Denoising.Figure 6 shows the denoised results
+of different methods on the real-scanned Paris-rue-Madame
+dataset [SMGD14]. We zoom in some of the regions to emphasize
+the different performances of these methods. As shown with the
+tree example in the first row, GLR and SBD often produce remain-
+ing outliers after denoising. PSR produces much cleaner results but
+sometimes causes larger holes in the results, such as in the tree ex-
+ample. IterPFN and PathNet protect the overall shape better, but
+cannot recover the geometric details clearly, such as the sill in the
+last row. By contrast, our method can not only generate clearer and
+smoother point clouds on the surface but also preserve subtle struc-
+tures and geometric details. As a result, our denoised points are
+scattered on the underlying surface uniformly and smoothly.
+5.4. Ablation Study
+We conduct the ablation study from two aspects. One is to vali-
+date the effectiveness of using the adaptive and iterative denois-
+ing strategy. We compare with the variants of our method without
+the iterative process or without the adaptive schedule. The other is
+to validate our key designs to strengthen the performance of our
+adaptive and iterative denoising process. Our key designs include
+adopting the diffusion model for point cloud denoising, the feature
+fusion, and the gradient fusion module in the denoising network.
+Table 2:Comparison among competitive denoising methods un-
+der different patterns of noise.P2M is multiplied by10 5.
+PU-Set 1% 2% 3%
+TypeModel 10K 50K 100K 10K 50K 100K 10K 50K 100K
+LA
+GLR 20.5 3.67 2.81 20.4 21.6 28.1 41.2 44.8 59.9
+SBD 6.66 2.27 1.68 18.2 8.71 9.46 33.9 16.6 19.3
+PSR 4.97 1.34 0.85 12.1 5.01 3.14 19.8 8.86 8.93
+IterPFN 3.15 0.85 0.48 8.05 3.09 4.42 31.8 24.1 35.3
+Ours 3.08 0.83 0.47 7.97 2.90 2.25 15.4 8.4710.4
+DC
+GLR 18.5 1.43 0.45 11.1 1.48 0.99 20.4 3.30 2.60
+SBD 2.46 0.48 0.35 4.19 1.37 1.03 9.76 2.45 1.97
+PSR 1.89 0.28 0.18 2.96 0.62 0.47 4.71 2.06 3.02
+IterPFN 0.87 0.15 0.09 1.83 0.37 0.223.09 0.77 0.57
+Ours 0.84 0.13 0.08 1.780.43 0.31 2.890.95 0.85
+AG
+GLR 19.6 2.50 1.34 13.5 7.51 10.2 27.0 16.1 21.7
+SBD 4.55 1.49 1.12 11.0 5.94 6.18 19.9 11.7 12.2
+PSR 3.41 0.76 0.52 8.42 3.44 2.27 14.0 6.86 6.58
+IterPFN 2.06 0.61 0.32 5.63 2.02 2.13 17.1 14.0 19.1
+Ours 2.04 0.53 0.30 5.45 1.97 1.78 10.3 6.047.95
+UG
+GLR 18.9 1.73 0.71 12.1 2.45 2.42 22.6 5.97 5.81
+SBD 2.78 0.65 0.48 5.45 2.43 2.10 11.4 4.80 4.30
+PSR 2.29 1.12 1.75 4.04 1.91 1.86 6.92 3.59 3.28
+IterPFN1.030.21 0.14 2.401.01 0.69 7.20 4.86 4.51
+Ours1.07 0.20 0.122.56 0.98 0.65 5.26 2.93 2.87
+UF
+GLR 18.4 1.42 0.45 11.1 1.28 0.89 20.4 3.52 2.46
+SBD 2.49 0.47 0.31 4.10 1.28 1.03 10.2 2.96 2.08
+PSR 1.92 0.27 0.17 3.01 0.63 0.54 4.77 2.36 3.32
+IterPFN 0.87 0.15 0.09 1.93 0.53 0.28 3.41 1.10 0.71
+Ours 0.84 0.13 0.08 1.87 0.43 0.24 3.08 0.87 0.65
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 11 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model11 of 18
+GLR
+ SBD
+ PSR
+ IterPFN
+ PathNet
+ Ours
+Noisy
+Figure 6:Results on three scanned models from the Paris-rue-Madame Database [SMGD14].By contrast, our method obviously avoids
+shrinkage and produces smooth surfaces while preserving the shape details.
+Noisy GLR SBD PSR IterPFN
+ Ours
+Figure 7:Visual comparisons of denoising methods under2%
+Laplace noise.Except for GLR, the other four methods are rel-
+atively robust to different noise patterns, but produce inaccurate
+results. By contrast, ours produces more accurate denoised results.
+5.4.1. Effectiveness of Adaptive and Iterative Schedule
+To validate the effectiveness of our adaptive and iterative denoising
+strategy, we construct two variants of our method to make the com-
+parison, as shown in the first two rows in Table 3. The first variant,
+denoted as OneStep, is a non-adaptive and non-iterative variant,
+which directly uses the network to predict the score vectors from
+the input noisy point cloud, and updates the point clouds only once
+to achieve the denoised result. Because it is difficult to predict the
+accurate score vectors from the noisy point clouds, the quantitative
+results are obviously worse than other iterative baselines.
+The second variant, denoted as FixedSched, is iterative but non-
+adaptive. Specifically, with our trained network, we pre-define a
+fixed iterative schedule following{α t =α(α decay)t }T
+t=1, as did in
+SBD [LH21b]. Based on our experiment results, it is able to im-
+prove the denoised results, but it is difficult to find a common fixed
+schedule for all the settings, i.e. point cloud density and noise scale.
+A long iterative process with many steps can alleviate this prob-
+lem, but it requires much more running time cost. For example,
+we achieve comparable results with a 30-step fixed schedule to our
+results with a 5-step adaptive schedule. We report the quantitative
+results with 5-step and 30-step fixed schedules in Table 3, denoted
+as FixedSched5 and FixedSched30 respectively.
+In contrast, the full implementation of our method uses the
+adaptive schedule of our formulation of the score-based diffusion
+model. It produces obviously better-denoised point clouds in Ta-
+ble 3, especially for the large-scale noises, validating the advantage
+of the adaptive schedule in the iterative denoising process.
+5.4.2. Key Designs in Score-based Point Cloud Denoising
+We conduct the following experiments to validate the key designs,
+i.e. point cloud denoising diffusion, feature fusion, and gradient fu-
+sion, in each iteration step to preserve the detailed shape features
+of the underlying surface during denoising. The quantitative evalu-
+ations of these experiments are listed in Table 3.
+Diffusion Model for Point Cloud Denoising.As explained in Sec-
+tion 3.1, we use the tailored score-based diffusion model for the
+point cloud denoising task (Equation 1) rather than the conven-
+tional generative diffusion model. To validate this, we conduct the
+alternative experiment, denoted as GDM (i.e. Generative Diffusion
+Model) in Table 3, where we construct the noisy point cloud dur-
+ing training based on the original DDPM formulation instead of
+our Equation 1. As for the iterative denoising process, the sampling
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 12 ====
+12 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+Table 3:Ablation study results.The advantage of adaptive denoising schedule is demonstrated by comparing it to the OneStep and Fixed-
+Sched baselines. The effectiveness of our key designs is validated by respectively adopting the generative diffusion model (GDM), removing
+feature fusion (w/ FT , w/ Ft, w/ Ft+T ), removing gradient fusion (w/o GF and w/ GF(const)). CD and P2M are multiplied by10 4 and10 5.
+CD (104) P2M (105)
+PU-Set 1% 2% 3% 1% 2% 3%
+Ablation 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K
+OneStep 2.17 0.61 0.33 3.15 0.88 0.62 3.86 1.53 1.54 2.21 0.59 0.38 6.52 2.32 2.36 12.4 7.16 9.67
+FixedSched5 2.18 0.62 0.34 3.12 0.85 0.57 3.75 1.27 1.34 2.24 0.65 0.33 6.08 2.15 1.84 10.5 5.01 7.72
+FixedSched30 2.16 0.61 0.32 3.09 0.83 0.51 3.70 1.23 1.05 2.28 0.58 0.34 5.62 1.89 1.53 9.97 4.76 5.17
+GDM 2.75 0.64 0.37 3.32 1.01 0.76 4.08 1.74 1.67 2.71 0.69 0.64 6.41 3.42 3.65 12.4 9.09 10.8
+w/FT 2.15 0.61 0.33 3.04 0.81 0.52 3.65 1.20 1.10 2.19 0.58 0.34 5.43 1.79 1.48 9.70 4.52 5.37
+w/Ft 2.13 0.60 0.32 3.06 0.83 0.57 3.70 1.47 1.48 2.12 0.52 0.31 5.32 2.04 1.93 9.98 6.65 8.87
+w/Ft+T 2.11 0.60 0.31 3.05 0.81 0.51 3.68 1.26 1.22 2.10 0.54 0.35 5.29 1.76 1.51 9.54 4.82 6.83
+w/o GF 2.22 0.61 0.33 3.16 0.87 0.54 3.86 1.34 1.24 2.83 0.68 0.38 6.56 2.19 1.63 11.3 5.37 6.61
+w/ GF(const) 2.16 0.60 0.32 3.04 0.83 0.52 3.67 1.25 1.13 2.22 0.58 0.35 5.48 1.98 1.54 9.76 4.96 5.76
+Full 2.09 0.59 0.30 2.99 0.78 0.50 3.62 1.18 1.09 2.04 0.51 0.29 5.09 1.68 1.44 9.41 4.45 5.51
+w/ 𝐹𝐹𝑇𝑇 w/ 𝐹𝐹𝑡𝑡+𝑇𝑇
+w/ 𝐹𝐹𝑡𝑡Noisy
+ Full
+Figure 8:Shape-preserving performance with or without the fea-
+ture fusion module in our network.
+formulation, i.e. Equation 7, is replaced by
+xt−1 = 1√αt
+
+xt − βt√1− ¯αt
+sθ (xt )
+
++z,z∼N(0,β tI)(17)
+Note that it prevents the use of our feature fusion due to the reason
+that we can only fuse the point-wise features of the point clouds at
+the same scale. So we directly use the shape features of the original
+noisy point cloud to predict the score vectors without the feature fu-
+sion technique. Consequently, the denoising performance decreases
+dramatically, validating the importance of the modified diffusion
+model formulation for point cloud denoising.
+Feature Fusion.Without the feature fusion module in our network,
+there are three alternative ways to select the point-wise features as
+input of the gradient prediction module. The first is to use the shape
+features of the original noisy point cloudxat the very beginning, as
+did in the SBD approach [LH21b], denoted as w/F T . The second
+is to use the shape feature of the updated point cloudxt at each step
+for score prediction, denoted as w/F t. The last one is to use the
+mean of the features of the current and original noisy point clouds,
+denoted as w/F t+T . We retrain the network for each of the exper-
+iments. Table 3 demonstrates that the shape feature of the updated
+point clouds often obtains slightly worse quantitative results un-
+der the large noise, since it may lose the shape features during the
+process. As shown in Figure 8, using the features of updated point
+clouds, i.e. w/Ft, produces relatively smooth denoised point clouds
+under most surfaces, but leaves obvious detail errors, since there is
+a lack of guidance from the shape feature of original point cloud.
+𝑤𝑤/𝑜𝑜 𝐺𝐺𝐺𝐺 𝑤𝑤/ 𝐺𝐺𝐺𝐺(𝑐𝑐𝑜𝑜𝑐𝑐𝑐𝑐𝑐𝑐)Noisy Full
+Figure 9:Thin-structure preserving performance with and with-
+out gradient fusion module in our network.We sample 10k points
+from a thin plane mesh and add 1% Gaussian noise. By contrast,
+our full method can protect the thin structure better, while w/oGF
+and w/GF(const)lead to surface degradation.
+By contrast, the feature fusion in our method aggregates the infor-
+mation during the iterative process and generates better-denoised
+point clouds while preserving the shape features.
+Gradient Fusion.We use two different implementations to remove
+our gradient fusion module. One is denoted as w/o GF withk=1,
+i.e. querying only one nearest neighbor fromx t and take its point-
+wise feature for score prediction. The other uses the average gradi-
+ent fusion, denoted as w/ GF(const). Again, as shown in Table 3,
+they cause a performance decrease due to the inaccurate score pre-
+diction, especially for the sparse point clouds. Figure 9 presents
+the visual results of these three strategies. It demonstrates that our
+strategy is superior in protecting the thin structures, since the local
+importance weight assists in separating close surfaces.
+5.5. Hyperparameters
+In the above experiments, we empirically select the proper hyper-
+parameters. Here we report the experiment results to validate the
+selection of the hyper-parameters. It demonstrates that the selected
+hyper-parameters are robust to different settings of the noisy point
+clouds, including the point densities and noise scales.
+Iteration NumberL.The formulation of the score-based diffusion
+model allows us to compute an adaptive schedule for the iterative
+denoising of varying noisy point clouds. Once the iteration number
+Lis specified, we only need to estimate the total noise variance and
+determine the schedule{τ l}based on Equation 16.
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 13 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model13 of 18
+1 2 3 4 5 6 7 8 30
+L steps
+0
+2
+4
+6
+P2M1e 5
+ PU 50K under different L
+Noise = 1%
+Noise = 2%
+Noise = 3%
+0.0 0.2 0.5 1.0
+0
+1
+2
+3
+4
+P2M1e 5
+ PU 50K under different 
+Figure 10:The denoising performance with adaptive schedules
+arranged with different numbers of timestepsLandη.The per-
+formance improvement is negligible when L is larger than 5.
+10.9
+9.11
+P2M 1e-5 PU 10K under different 
+4.95
+4.39
+P2M 1e-5 PU 50K under different 
+4.90
+5.32 1.71
+1.64
+0.0 0.9 0.95 0.99 1.0
+2.02
+2.08
+0.0 0.9 0.95 0.99 1.0
+0.50
+0.54
+Noise = 1%
+Noise = 2%
+Noise = 3%
+Figure 11:The denoising performance with varyingλ.We select
+λfor the noisy point clouds with different scales of noise.
+The left picture of Figure 10 presents the denoising performance
+measured with P2M metric when setting different numbers of iter-
+ations during denoising. We testedLranging from 1 to 8, as well
+as the caseL=30. It shows that the denoising performance be-
+comes stable as long as the iteration number is larger than 5. More
+iteration steps don’t improve the performance obviously and would
+cause more running time costs. Therefore, we setL=5 in all the
+other experiments for efficiency purposes.
+Sampling Noise Weightη.The score-based diffusion model for
+point cloud denoising uses estimated noise to sample the denoised
+points in the next step. The sampling is illustrated in Equation 5
+and 6, where the variableηcontrols whether the noise varianceΣ
+is used in each iteration step. In other words,η=0 uses a deter-
+ministic sampling process to iteratively update the point clouds.
+We test the performance withη∈[0,1]in the right picture of
+10. For small-scale noise, such as 1% and 2% noises, the results
+are slightly better whenη=0, while for large-scale 3% noise the
+performance is superior whenη=1. We assume the reason as the
+predicted scores of the trained network are not accurate when the
+point cloud is coupled with large-scale noise, and inject a small
+amount of random noise helps to generate reasonable results. But
+overall, the quantitative results with varyingηare close to each
+other. We setη=0 in all the other experiments for improving the
+accuracy at small-level noise.
+Loss Weightλ.The variableλcontrols whether our network fo-
+cuses more on the small-scale noise or the large-scale noise dur-
+ing training. The network has a larger weight on the loss of those
+timesteps with small-scale noise whenλ=0, and the opposite
+whenλ=1. Figure 11 shows how the denoising performance
+varies along withλon different scales of noises. We setλ=0.99
+in our experiments for a balanced performance.
+6. Conclusion
+We propose an adaptive and iterative point cloud denoising method
+with the score-based diffusion model. For each given noisy point
+cloud, we estimate its noise variance and determine an adaptive
+schedule for the iterative denoising purpose. We design and train
+the denoising network architecture with feature fusion and gradient
+fusion to recover the underlying surface. Our method effectively re-
+duces noise and produces clean point clouds, alleviating the shrink-
+age and outlier problems.
+However, the denoised point clouds of our method are still not
+exactly distributed on the underlying surface, especially for the
+sparse point cloud with large-scale noise. It is difficult to estimate
+the accurate surface based on merely the noisy point cloud, when
+the network is trained on a dataset with a limited amount of 3D
+data. Exploiting the 3D prior with a large-scale dataset or lifting
+the 2D prior with state-of-the-art foundation models would further
+promote the point cloud denoising performance.
+Acknowledgments
+We thank the anonymous reviewers for their helpful comments and
+suggestions. This work is supported by the Joint Funds of the Na-
+tional Natural Science Foundation of China (U23A20312), the Na-
+tional Key R&D Program of China (2021YFB1715900), the Na-
+tional Natural Science Foundation of China (62272277, 62072284,
+62302269), and a grant from the Natural Science Foundation of
+Shandong Province (No. ZR2023QF077). Manyi Li is supported by
+the Excellent Young Scientists Fund Program (Overseas) of Shan-
+dong Province (Grant No.2023HWYQ-034).
+Data Citation
+The data that support the findings of this study are available from
+the corresponding author upon reasonable request.
+References
+[ABCO∗01] ALEXAM., BEHRJ., COHEN-ORD., FLEISHMANS.,
+LEVIND., SILVAC. T.: Point set surfaces. InProceedings Visual-
+ization, 2001. VIS’01.(2001), IEEE, pp. 21–29. 1, 2
+[ABCO∗03] ALEXAM., BEHRJ., COHEN-ORD., FLEISHMANS.,
+LEVIND., SILVAC. T.: Computing and rendering point set surfaces.
+IEEE Transactions on visualization and computer graphics 9, 1 (2003),
+3–15. 2
+[CLH∗22] CHENH., LUOS., HUW.,ET AL.: Deep point set resampling
+via gradient fields.IEEE Transactions on Pattern Analysis and Machine
+Intelligence(2022). 1, 2, 3, 7, 9
+[CLW∗23] CHENZ., LIP., WEIZ., CHENH., XIEH., WEIM., WANG
+F. L.: Geogcn: Geometric dual-domain graph convolution network for
+point cloud denoising. InICASSP 2023-2023 IEEE International Con-
+ference on Acoustics, Speech and Signal Processing (ICASSP)(2023),
+IEEE, pp. 1–5. 3
+[CP05] CAZALSF., POUGETM.: Estimating differential quantities using
+polynomial fitting of osculating jets.Computer Aided Geometric Design
+22, 2 (2005), 121–146. 1, 2, 9
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 14 ====
+14 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+[CWL∗22] CHENH., WEIZ., LIX., XUY., WEIM., WANGJ.: Repcd-
+net: Feature-aware recurrent point cloud denoising network.Interna-
+tional Journal of Computer Vision 130, 3 (2022), 615–629. 2
+[CWS∗19] CHENH., WEIM., SUNY., XIEX., WANGJ.: Multi-patch
+collaborative point cloud denoising via low-rank recovery with graph
+constraint.IEEE transactions on visualization and computer graphics
+26, 11 (2019), 3255–3270. 2
+[DDF17] DIGNEJ., DEFRANCHISC.: The bilateral filter for point
+clouds.Image Processing On Line 7(2017), 278–287. 1, 2
+[DG10] DESCHAUDJ.-E., GOULETTEF.: Point cloud non local denois-
+ing using local surface descriptor similarity. URL:https://api.
+semanticscholar.org/CorpusID:8348890. 1, 2
+[dSELS∗23]DESILVAEDIRIMUNID., LUX., SHAOZ., LIG.,
+ROBLES-KELLYA., HEY.: Iterativepfn: True iterative point cloud fil-
+tering. InProceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition(2023), pp. 13530–13539. 3, 7, 9
+[FDCO03] FLEISHMANS., DRORII., COHEN-ORD.: Bilateral mesh
+denoising. InACM SIGGRAPH 2003 Papers. 2003, pp. 950–953. 2
+[FLP∗23] FEIB., LYUZ., PANL., ZHANGJ., YANGW.,JIANLUOT.,
+ZHANGB., DAIB.: Generative diffusion prior for unified image restora-
+tion and enhancement.2023 IEEE/CVF Conference on Computer Vision
+and Pattern Recognition (CVPR)(2023), 9935–9946. URL:https:
+//api.semanticscholar.org/CorpusID:257921922. 3
+[FSG17] FANH., SUH., GUIBASL. J.: A point set generation net-
+work for 3d object reconstruction from a single image. InProceedings of
+the IEEE conference on computer vision and pattern recognition(2017),
+pp. 605–613. 9
+[GKOM18] GUERREROP., KLEIMANY., OVSJANIKOVM., MITRA
+N. J.: Pcpnet learning local shape properties from raw point clouds. In
+Computer graphics forum(2018), vol. 37, Wiley Online Library, pp. 75–
+85. 2
+[HJA20] HOJ., JAINA., ABBEELP.: Denoising diffusion probabilistic
+models.Advances in Neural Information Processing Systems 33(2020),
+6840–6851. 2, 3, 4, 5, 16
+[HLZ∗09] HUANGH., LID., ZHANGH., ASCHERU., COHEN-ORD.:
+Consolidation of unorganized point clouds for surface reconstruction.
+ACM transactions on graphics (TOG) 28, 5 (2009), 1–7. 1, 2
+[HRR19] HERMOSILLAP., RITSCHELT., ROPINSKIT.: Total denois-
+ing: Unsupervised learning of 3d point cloud cleaning. InProceedings
+of the IEEE/CVF international conference on computer vision(2019),
+pp. 52–60. 1, 2, 3, 4
+[HTG22] HUSSEINS. A., TIRERT., GIRYESR.: Adir: Adaptive
+diffusion for image reconstruction.ArXiv abs/2212.03221(2022).
+URL:https://api.semanticscholar.org/CorpusID:
+254275000. 3
+[HXW∗22] HUANGA., XIEQ., WANGZ., LUD., WEIM., WANG
+J.: Modnet: Multi-offset point cloud denoising network customized for
+multi-scale patches.arXiv preprint arXiv:2208.14160(2022). 9, 10
+[KEES22] KAWARB., ELADM., ERMONS., SONGJ.: Denoising dif-
+fusion restoration models.Advances in Neural Information Processing
+Systems 35(2022), 23593–23606. 3
+[LCOLTE07] LIPMANY., COHEN-ORD., LEVIND., TAL-EZERH.:
+Parameterization-free projection for geometry reconstruction.ACM
+Transactions on Graphics (TOG) 26, 3 (2007), 22–es. 2
+[LH20] LUOS., HUW.: Differentiable manifold reconstruction for point
+cloud denoising.Proceedings of the 28th ACM International Conference
+on Multimedia(2020). URL:https://api.semanticscholar.
+org/CorpusID:220793119. 2, 3, 9
+[LH21a] LUOS., HUW.: Diffusion probabilistic models for 3d point
+cloud generation. InProceedings of the IEEE/CVF Conference on Com-
+puter Vision and Pattern Recognition(2021), pp. 2837–2845. 4
+[LH21b] LUOS., HUW.: Score-based point cloud denoising. InPro-
+ceedings of the IEEE/CVF International Conference on Computer Vision
+(2021), pp. 4583–4592. 1, 2, 3, 7, 9, 11, 12, 16
+[LKX∗21] LYUZ., KONGZ., XUX., PANL., LIND.: A condi-
+tional point diffusion-refinement paradigm for 3d point cloud com-
+pletion.ArXiv abs/2112.03530(2021). URL:https://api.
+semanticscholar.org/CorpusID:244920632. 4
+[LZZ∗23] LIUZ., ZHAOY., ZHANS., LIUY., CHENR., HEY.: Pcdnf:
+revisiting learning-based point cloud denoising via joint normal filtering.
+IEEE Transactions on Visualization and Computer Graphics(2023). 3,
+9
+[MC17] MATTEIE., CASTRODADA.: Point cloud denoising via mov-
+ing rpca. InComputer Graphics Forum(2017), vol. 36, Wiley Online
+Library, pp. 123–137. 2
+[MDW∗22] MAOA., DUZ., WENY.-H., XUANJ., LIUY.-J.: Pd-flow:
+A point cloud denoising framework with normalizing flows. InEuropean
+Conference on Computer Vision(2022), Springer, pp. 398–415. 1, 3
+[MKRV23] MELAS-KYRIAZIL., RUPPRECHTC., VEDALDIA.: Pc2:
+Projection-conditioned point cloud diffusion for single-image 3d recon-
+struction.2023 IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR)(2023), 12923–12932. URL:https://api.
+semanticscholar.org/CorpusID:257050414. 4
+[OGG09] OZTIRELIC., GUENNEBAUDG., GROSSM.: Feature preserv-
+ing point set surfaces based on non-linear kernel regression. InComputer
+graphics forum(2009), vol. 28, pp. 493–501. 2
+[PFVM20] PISTILLIF., FRACASTOROG., VALSESIAD., MAGLIE.:
+Learning graph-convolutional representations for point cloud denoising.
+InComputer Vision–ECCV 2020: 16th European Conference, Glasgow,
+UK, August 23–28, 2020, Proceedings, Part XX 16(2020), Springer,
+pp. 103–118. 1, 2, 3
+[PMA∗14] PREINERR., MATTAUSCHO., ARIKANM., PAJAROLAR.,
+WIMMERM.: Continuous projection for fast l1 reconstruction.ACM
+Trans. Graph. 33, 4 (2014), 47–1. 2
+[QSMG16] QIC. R., SUH., MOK., GUIBASL. J.: Pointnet: Deep
+learning on point sets for 3d classification and segmentation.arXiv
+preprint arXiv:1612.00593(2016). 2
+[QYSG17] QIC. R., YIL., SUH., GUIBASL. J.: Pointnet++: Deep hi-
+erarchical feature learning on point sets in a metric space.arXiv preprint
+arXiv:1706.02413(2017). 3
+[RBL∗22] ROMBACHR., BLATTMANNA., LORENZD., ESSERP., OM-
+MERB.: High-resolution image synthesis with latent diffusion models.
+InProceedings of the IEEE/CVF conference on computer vision and pat-
+tern recognition(2022), pp. 10684–10695. 3, 4
+[RDN∗22] RAMESHA., DHARIWALP., NICHOLA., CHUC., CHEN
+M.: Hierarchical text-conditional image generation with clip latents.
+arXiv preprint arXiv:2204.06125(2022). 3
+[RLBG∗20] RAKOTOSAONAM.-J., LABARBERAV., GUERREROP.,
+MITRAN. J., OVSJANIKOVM.: Pointcleannet: Learning to denoise and
+remove outliers from dense point clouds. InComputer graphics forum
+(2020), vol. 39, Wiley Online Library, pp. 185–203. 1, 2, 9, 10
+[RRN∗20] RAVIN., REIZENSTEINJ., NOVOTNYD., GORDONT., LO
+W.-Y., JOHNSONJ., GKIOXARIG.: Accelerating 3d deep learning with
+pytorch3d.arXiv preprint arXiv:2007.08501(2020). 9
+[SBV∗18] SARKARK., BERNARDF., VARANASIK., THEOBALTC.,
+STRICKERD.: Structured low-rank matrix factorization for point-
+cloud denoising.2018 International Conference on 3D Vision (3DV)
+(2018), 444–453. URL:https://api.semanticscholar.org/
+CorpusID:52104932. 1, 2
+[SDWMG15] SOHL-DICKSTEINJ., WEISSE., MAHESWARANATHAN
+N., GANGULIS.: Deep unsupervised learning using nonequilibrium
+thermodynamics. InInternational Conference on Machine Learning
+(2015), PMLR, pp. 2256–2265. 2, 3
+[SE20] SONGY., ERMONS.: Improved techniques for training score-
+based generative models.Advances in neural information processing
+systems 33(2020), 12438–12448. 16
+[SME20] SONGJ., MENGC., ERMONS.: Denoising diffusion implicit
+models.arXiv preprint arXiv:2010.02502(2020). 3
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 15 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model15 of 18
+[SMGD14] SERNAA., MARCOTEGUIB., GOULETTEF., DESCHAUD
+J.-E.: Paris-rue-madame database: a 3d mobile laser scanner dataset for
+benchmarking urban detection, segmentation and classification methods.
+In4th international conference on pattern recognition, applications and
+methods ICPRAM 2014(2014). 9, 10, 11
+[SSDK∗21] SONGY., SOHL-DICKSTEINJ., KINGMAD. P., KUMAR
+A., ERMONS., POOLEB.: Score-based generative modeling through
+stochastic differential equations. InInternational Conference on Learn-
+ing Representations(2021). URL:https://openreview.net/
+forum?id=PxTIG12RRHS. 2, 3, 16
+[SSW15] SUNY., SCHAEFERS., WANGW.: Denoising point sets via l0
+minimization.Computer Aided Geometric Design 35(2015), 2–15. 2
+[TM98] TOMASIC., MANDUCHIR.: Bilateral filtering for gray and
+color images.Sixth International Conference on Computer Vision
+(IEEE Cat. No.98CH36271)(1998), 839–846. URL:https://api.
+semanticscholar.org/CorpusID:14308539. 2
+[WCN∗24] WEIZ., CHENH., NANL., WANGJ., QINJ., WEIM.:
+Pathnet: Path-selective point cloud denoising.IEEE Transactions on Pat-
+tern Analysis and Machine Intelligence(2024). 3, 9
+[WCZ∗08] WANGR., CHENW., ZHANGS. Y., ZHANGY., YEX.:
+Similarity-based denoising of point-sampled surfaces.Journal of Zhe-
+jiang University-SCIENCE A 9(2008), 807–815. URL:https://
+api.semanticscholar.org/CorpusID:123138460. 2
+[WCZ∗21] WEIM., CHENH., ZHANGY., XIEH., GUOY., WANG
+J.: Geodualcnn: Geometry-supporting dual convolutional neural net-
+work for noisy point clouds.IEEE Transactions on Visualization and
+Computer Graphics 29, 2 (2021), 1357–1370. 3
+[WSL∗19] WANGY., SUNY., LIUZ., SARMAS. E., BRONSTEIN
+M. M., SOLOMONJ. M.: Dynamic graph cnn for learning on point
+clouds.Acm Transactions On Graphics (tog) 38, 5 (2019), 1–12. 6
+[WWZ∗23] WEIM., WEIZ., ZHOUH., HUF., SIH., CHENZ., ZHU
+Z., QIUJ., YANX., GUOY.,ET AL.: Agconv: Adaptive graph convo-
+lution on 3d point clouds.IEEE Transactions on Pattern Analysis and
+Machine Intelligence 45, 8 (2023), 9374–9392. 3
+[YLF∗18a] YUL., LIX., FUC.-W., COHEN-ORD., HENGP.-A.: Ec-
+net: an edge-aware point set consolidation network. InProceedings of the
+European conference on computer vision (ECCV)(2018), pp. 386–402.
+3
+[YLF∗18b] YUL., LIX., FUC.-W., COHEN-ORD., HENGP.-A.: Pu-
+net: Point cloud upsampling network. InProceedings of the IEEE confer-
+ence on computer vision and pattern recognition(2018), pp. 2790–2799.
+7, 9, 10
+[YWQ∗24] YIC., WEIZ., QIUJ., CHENH., WANGJ., WEIM.: Pn-
+internet: Point-and-normal interactive network for noisy point clouds.
+IEEE Transactions on Geoscience and Remote Sensing(2024). 3
+[ZCN∗19] ZENGJ., CHEUNGG., NGM., PANGJ., YANGC.: 3d point
+cloud denoising using graph laplacian regularization of a low dimen-
+sional manifold model.IEEE Transactions on Image Processing 29
+(2019), 3474–3489. 1, 2, 9
+[ZCZ∗22] ZHOUH., CHENH., ZHANGY., WEIM., XIEH., WANG
+J., LUT., QINJ., ZHANGX.-P.: Refine-net: Normal refinement neural
+network for noisy point clouds.IEEE Transactions on Pattern Analysis
+and Machine Intelligence 45, 1 (2022), 946–963. 3
+[ZLQH20] ZHANGD., LUX., QINH., HEY.: Pointfilter: Point cloud
+filtering via encoder-decoder modeling.IEEE Transactions on Visual-
+ization and Computer Graphics 27, 3 (2020), 2015–2027. 1, 2, 7, 9,
+16
+[ZVW∗22] ZENGX., VAHDATA., WILLIAMSF., GOJCICZ., LITANY
+O., FIDLERS., KREISK.: Lion: Latent point diffusion models for
+3d shape generation.ArXiv abs/2210.06978(2022). URL:https:
+//api.semanticscholar.org/CorpusID:252872881. 4
+[ZWN17] ZAMANF., WONGY. P., NGB. Y.: Density-based denois-
+ing of point cloud. In9th International Conference on Robotic, Vision,
+Signal Processing and Power Applications: Empowering Research and
+Innovation(2017), Springer, pp. 287–295. 1
+[ZWZ∗24] ZHANGY., WEIM., ZHUL., SHENG., WANGF. L., QIN
+J., WANGQ.: Norest-net: Normal estimation neural network for 3-d
+noisy point clouds.IEEE Transactions on Neural Networks and Learning
+Systems(2024). 3
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 16 ====
+16 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+Appendix A:Derivation in the forward diffusion process
+As described in Section 3.1, noisy point clouds’ conditional dis-
+tribution can be considered a Markov chain. Here we explain the
+derivation of Equation 1 in Section 3.1. Considering that the Gaus-
+sian distribution is additive, we can expandq(x t |x0)as follows:
+xt =x 0 +
+r
+1− ¯αt
+¯αt
+z,z∼N(0,I),
+=x t−1 −
+s
+1− ¯αt−1
+¯αt−1
+zt−1 +
+r
+1− ¯αt
+¯αt
+zt ,z t ,zt−1 ∼N(0,I),
+=x t−1 +
+s
+βt
+¯αt
+z,z∼N(0,I).
+(18)
+Its distribution form is described as follows:
+q(xt |xt−1 ) =N(xt;xt−1 ,βt / ¯αtI).(19)
+Appendix B:Derivation in the sampling process
+According to DDPM [HJA20], the conditional distribution
+pθ (xt−∆ |xt ) =N(xt−∆;µ θ ,Σ)of sampling process aims to restore
+the sequence fromx t tox t−∆, where∆∈[1,t]. For the correspond-
+ing diffusion process, this means thep θ (xt−∆ |xt )andq(x t−∆ |xt ) =
+N(x t−∆; ˜µt , ˜σ 2t I)distributions are equivalent in definition, where
+q(xt−∆ |xt )can be formed asq(x t−∆ |xt ,x 0).
+Based on Bayes’ theorem, we can expand the distribution as fol-
+lows:
+q(xt−∆ |xt ,x 0) =N(xt;xt−∆ , ¯αt−∆ − ¯αt
+¯αt−∆ ¯αt
+I)
+N(x t−∆;x 0, 1− ¯αt−∆
+¯αt−∆
+I)
+N(x t;x 0, 1− ¯αt
+¯αt
+I)
+∝exp(− 1
+2 ( ¯αt ¯αt−∆ (xt −x t−∆ )2
+¯αt−∆ − ¯αt
++ ¯αt−∆ (xt−∆ −x 0)2
+1− ¯αt−∆
+− ¯αt (xt −x 0)2
+1− ¯αt
+))
+=exp(− 1
+2 ( ¯αt−∆ (1− ¯αt )
+¯σ 2
+t−∆ ( ¯αt−∆ − ¯αt )
+| {z }
+1/ ˜σ 2
+t
+(xt−∆ )2
+−2( ¯αt ¯αt−∆
+¯αt−∆ − ¯αt
+xt + ¯αt−∆
+1− ¯αt−∆
+x0)
+| {z }
+˜µt / ˜σ 2
+t
+xt−∆ +C)).
+(20)
+Lemma 1For Gaussian distributionN(µ,σ 2), its expansion is
+G(x|µ,σ 2)∝exp(− (x−µ) 2
+2σ 2 ) =exp(−1
+2 ( x2
+σ 2 −2 µ
+σ 2 x+C)).
+Then, we can express the variables ˜µt and ˜σ 2t as:
+˜σ 2
+t =
+¯σ 2
+t−∆ ( ¯αt−∆ − ¯αt )
+¯αt−∆ (1− ¯αt ) , ˜µt = ¯αt (1− ¯αt−∆ )xt + (¯αt−∆ − ¯αt )x0
+¯αt−∆ (1− ¯αt ) .
+(21)
+We note that in Song et al. [SE20], a variable varianceΣ η is in-
+troduced, and then the conditional distributionp θ (xt−∆ |xt )can be
+conditionally updated as an implicit process without random noise
+injection. So we further define:
+pθ (xt−∆ |xt ) =pθ (xt−∆ |xt ,x 0) =N(xt−∆;k x 0 +m x t ,Σ ηI),(22)
+where we use undetermined coefficientskandmto represent the
+variableµ θ , and defineΣ η =ηΣ=η ˜σ 2t . In the subsequent section,
+we derive the expressionµ θ controlled by the coefficientΣ η.
+First, replace variablex t byq(x t |x0):
+pθ (xt−∆ |Sxt ,x 0) =N
+
+xt−∆;(k+m)x 0,
+ 1− ¯αt
+¯αt
+m2 +Σ η
+
+I
+
+.
+(23)
+Since there is an equivalence betweenp θ (xt−∆ |Sxt ,x 0)and
+q(xt−∆ |x0), we have:
+m=
+s
+(1− ¯αt−∆ (1+Σ η )) ¯αt
+¯αt−∆ (1− ¯αt ) andk=1−m,(24)
+and we have the relationshipµ θ = (1−m)x0 +m x t, which can be
+reparametrized into a form:
+µθ =x t + (
+s
+1− ¯αt−∆ (1+Σ η )
+¯αt−∆
+−
+r
+1− ¯αt
+¯αt
+)zθ (xt ).(25)
+Previous Displacement and gradient-based works [ZLQH20,
+LH21b, SSDK∗21] have found that modeling gradient gives better
+results than modeling noise.
+Lemma 2For Gaussian variablex∼p(x) =N(x;µ,Σ), we can
+estimate the meanµusingxand the gradient of log-likelihood
+logp(x):
+µ=x+Σ∇ x logp(x).(26)
+Plug Lemma.2 intoq(x t |x0), we further define the score as the gra-
+dient− ¯σtzθ ∝ ¯σ 2t ∇x log[p θ (xt |x0)] =sθ (xt ). Thenµ θ can be ex-
+pressed as:
+µθ =x t + (1−
+s
+(1− ¯αt−∆ (1+Σ η )) ¯αt
+(1− ¯αt ) ¯αt−∆
+)sθ (xt ).(27)
+Appendix C:Derivation of the loss function
+Following DDPM [HJA20], our trainable objectiveLis obtained
+by deriving the variational lower bound on negative log-likelihood:
+E[−logp θ (x0)]
+≤E q
+
+−log pθ (x0:T )
+q(x1:T |x0)
+
+=E q
+
+−log p(xT )
+q(xT |x0) −
+X
+t>1
+log pθ (xt−1 |xt )
+q(xt−1 |xt ,x 0) −logp θ (x0|x1)
+
+=E q
+ X
+t>1,∆
+DKL (q(xt−∆ |xt ,x 0)||p θ (xt−∆ |xt ))
+
++D KL (q(xT |x0)||p(x T ))−logp θ (x0|x1)
+≤E q
+ X
+t>1,∆
+DKL (q(xt−∆ |xt ,x 0)||p θ (xt−∆ |xt ))
+
+=:L(x 0:T ,{βt }T
+t=1 ).
+(28)
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 17 ====
+Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model17 of 18
+＊ =
+Figure 12:Visual of standard deviation ¯σt at different steps under differentλThe left plot visualizes the noise scale in the diffusion
+process which is represented by the parameter[T,β T ]. The middle visualizes the interpolated weights w= (1−λ)/ ¯σt +λin lossL. The
+right visualizes the product of previous two results, representing the normalized scale at different steps t in lossL.
+where P
+t>1,∆ denotes a summation withttaking values in steps∆.
+Lemma 3For multivariate Gaussian distributionsN 0(µ0,Σ 0)and
+N1(µ1,Σ 1), their KL divergence can be expressed as
+DKL (N0||N1) =
+1
+2
+
+trΣ−1
+1 Σ0 −k+ (µ1 −µ 0)T Σ−1
+1 (µ1 −µ 0) +lndetΣ 1
+detΣ 0
+
+.
+(29)
+After simplifying the summation term, if we continue to simplify
+L, we need to expand the KL divergence term:
+DKL (q(xt−∆ |xt ,x 0)||p θ (xt−∆ |xt ))
+= 1
+2 (3−3+Σ −1|| ˜µt −µ θ ||2 +log1)
+≤ ||sθ (xt )−S(x t )||2,
+(30)
+where,− ¯σtz∝ ¯σ 2t ∇x log[q(xt |x0)] =S(xt ). Here, we obtain the first
+loss function, which is computed directly at the score:
+L1 =E q,t>0
+sθ (xt )−S(x t )
+2
+2
+
+.(31)
+It is evident thatL 1 is more concerned about large-scale noise, e.g.
+the gradient with ¯σ=3% is triple larger than the one with ¯σ=1%.
+Notably, we can observe similar relationships between the score
+and Gaussian distribution in− ¯σtzθ ∝s θ (xt )and− ¯σtz∝S(x t ).
+Then, we propose the loss with normalized standard deviation:
+L2 =E q,t>0
+ 1
+¯σt
+(sθ (xt )−S(x t ))
+2
+2
+
+.(32)
+Here, this weight 1/ ¯σt is very large for extremely small noise, e.g.
+¯σt =0.1%. In our experiments, we observed thatL 2 is slightly bet-
+ter at learning the score of point clouds with small-scale noise com-
+pared toL 1. We hope our modelsθ to have a balanced performance
+on both small and large noise, so we chose the interpolated weight
+in our implementation:
+L=E q,t>0
+
+
+ 1−λ
+¯σt
++λ
+
+(sθ (xt )−S(x t ))
+
+
+2
+2
+
+.(33)
+It is evident that the lossLalso is the variational bound of
+E[−logp θ (x0)]. In our experiments, we setλ=0.99 because 1/ ¯σt
+is much larger than 1.
+The left picture of Fig. 12 plots the standard deviation of the cou-
+pled noise in the point clouds, where its variation in our diffu-
+sion process under[T=1000,β T =2e −6]is approximately linear.
+Whenλ=0, the scores in loss are normalized to the standard scale.
+This means the scores of small-scale noisy point cloud, which are
+easily ignored underλ=1, become more significant than those of
+large noise. However, in our experiment, we found that thes θ ob-
+tained byλ=0 is more likely to generate bumpy details when de-
+noising large-scale noisy point clouds. In contrast, thes θ obtained
+byλ=1 tends to smooth the details when denoising small-scale
+noisy point clouds. For more general performance, we selectλbe-
+tween 0 and 1. Further, since the weight 1/ ¯σt is obviously larger
+than 1, we setλ=0.99 in our experiment.
+Appendix D:Further Ablations on Iterative Strategy
+We conduct a further ablation study to validate our iterative strat-
+egy by directly replacing the iterative algorithms of SBD and PSR,
+denoted as+ourin Table 4. Since SBD does not fully adhere to its
+iterative algorithm when denoising 3% of inputs, we only compare
+it on the 1% and 2% portions of the PUNet test set. Consequently,
+the iterative strategy in our method effectively avoids surface col-
+lapse caused by over-iteration, particularly for sparse point clouds.
+Appendix E:More Discussion on Schedule Arrangement
+During training (Section 1), our∆sampling strategy is motivated
+by the formulation presented in Section 3.1, where the diffusion
+process and sampling scheme are based on a Markov chain defined
+by training schedule{β t }. Consequently, we design the uniform
+∆sampling strategy to accurately model the reverse recovery se-
+quence described in Eq. 4, ensuring that our denoising network sat-
+isfies both Section 3.1 and the training schedule.
+In Section 4.3, we employ an adaptive schedule aligned to the train-
+submitted to COMPUTER GRAPHICSForum(9/2025).
+==== PAGE 18 ====
+18 of 18Z. Wang, M. Li, S. Xin, C. Tu / Adaptive and Iterative Point Cloud Denoising with Score-Based Diffusion Model
+Table 4:Ablation study of the Iterative Strategy and Adaptive Schedule Arrangement.
+CD (104) P2M (105)
+PU-Set 1% 2% 3% 1% 2% 3%
+Ablation 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K 10K 50K 100K
+SBD 2.52 0.71 0.42 3.68 1.29 1.044.71 1.93 1.75 4.63 1.50 1.12 10.7 5.66 5.7819.4 10.4 10.8
+SBD (+our)2.41 0.70 0.41 3.61 1.201.34 - - - 3.95 1.41 1.05 9.97 5.377.58 - - -
+PSR 2.42 0.65 0.37 3.44 1.03 0.62 4.17 1.40 1.06 3.31 0.75 0.498.17 3.30 2.11 13.4 5.82 4.93
+PSR (+our) 2.33 0.64 0.36 3.32 0.99 0.59 4.03 1.31 1.02 3.02 0.690.52 7.42 3.05 2.02 12.3 5.22 4.82
+w/o align 2.09 0.59 0.30 2.99 0.78 0.503.63 1.19 1.11 2.030.52 0.29 5.071.69 1.46 9.44 4.51 5.61
+Full 2.09 0.59 0.30 2.99 0.78 0.50 3.62 1.18 1.09 2.04 0.51 0.295.09 1.68 1.44 9.41 4.45 5.51
+ing schedule during inference. Table 4 presents an ablation study
+that validates the effectiveness of aligning the schedules used dur-
+ing training and inference. We replace the search for the corre-
+sponding timestep ˆτ∈ {0, . . . ,T}as directly searching forβˆτ ∈R +,
+denoted asw/o align:
+β ˆτ =argmin
+β ˆτ ∈R+
+ ¯σ 2
+ˆτ − ¯σ 2.(34)
+The search terminates when
+ ¯σ 2
+ˆτ − ¯σ 2 <10 −5. Then, we can ob-
+tain{β t } ˆτ
+t=1 with linear interpolation (assumingβ 0 =0) irrespec-
+tive of the alignment operation.
+In contrast, the full implementation of our method uses the adap-
+tive schedule aligned to the training schedule. This more straight-
+forward manner provides slightly more robust performance under
+varying levels of noise.
+submitted to COMPUTER GRAPHICSForum(9/2025).
