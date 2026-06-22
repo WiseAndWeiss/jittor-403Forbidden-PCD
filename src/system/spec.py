@@ -257,6 +257,13 @@ class DummySystem():
                 _wandb_log({'train/epoch_loss': epoch_loss_sum / epoch_loss_cnt, 'epoch': epoch},
                            step=global_step)
 
+            # Save the checkpoint right after training (rank-0 only) so that a
+            # failure during validation can never discard a trained epoch.
+            if is_main_process():
+                checkpoint_path = os.path.join(self.ckpt_save_dir, f'{self.ckpt_save_name}_{epoch}.pkl')
+                os.makedirs(self.ckpt_save_dir, exist_ok=True)
+                self.model.save(checkpoint_path)
+
             self.model.eval()
             validate_dataloader = self.dataset_module.validate_dataloader()
             if validate_dataloader is not None:
@@ -283,11 +290,6 @@ class DummySystem():
                     _wandb_log(val_means, step=global_step)
                 self.on_validation_epoch_end()
 
-            # Save checkpoints on the main process only (avoids MPI write races).
-            if is_main_process():
-                checkpoint_path = os.path.join(self.ckpt_save_dir, f'{self.ckpt_save_name}_{epoch}.pkl')
-                os.makedirs(self.ckpt_save_dir, exist_ok=True)
-                self.model.save(checkpoint_path)
             if get_world_size() > 1:
                 # keep ranks in lock-step across the epoch boundary
                 try:

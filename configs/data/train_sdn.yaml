@@ -22,7 +22,7 @@ train_dataset:
 
 validate_dataset:
   shuffle: False
-  batch_size: 1
+  batch_size: 3       # must be >= MPI world_size (3 GPUs); Jittor asserts this
   num_workers: 0
   datapath:
     input_dataset_dir: ./dataset_train
