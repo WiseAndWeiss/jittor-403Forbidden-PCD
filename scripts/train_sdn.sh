@@ -16,9 +16,21 @@ cd "$REPO"
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate jittor
 
-# Use 3 of the 4 A6000s by default (leave one card for other users).
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2}"
-NP="${NP:-3}"
+# GPU selection: honor CUDA_VISIBLE_DEVICES if set; otherwise auto-pick the
+# free-est cards (shared server -> avoid colliding with other users). NEED is how
+# many we want (default 3, capped to leave 1 card free for others).
+NEED="${NEED:-3}"
+if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+  TOTAL=$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)
+  MAXUSE=$(( TOTAL - 1 ))                       # always leave >=1 card for others
+  [ "$NEED" -gt "$MAXUSE" ] && NEED="$MAXUSE"
+  # cards with <1500 MiB used are considered free
+  FREE=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits \
+         | awk -F',' '$2+0 < 1500 {print $1}' | head -n "$NEED" | paste -sd, -)
+  if [ -z "$FREE" ]; then echo "[train_sdn] no free GPU found"; exit 1; fi
+  export CUDA_VISIBLE_DEVICES="$FREE"
+fi
+NP="${NP:-$(echo "$CUDA_VISIBLE_DEVICES" | awk -F',' '{print NF}')}"
 
 # NOTE: Jittor's dataloader workers segfault under MPI (fork-after-CUDA +
 # threaded scipy/numpy), so training uses num_workers=0 (data loads in the main
