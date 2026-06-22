@@ -1,31 +1,32 @@
-data_name: &data_name models/model_normalized.obj
-loader: &loader obj
+data_name: &data_name cloud.npy
+loader: &loader npy_cloud      # pre-sampled clean clouds (tools/cache_clouds.py)
 
-# batch_size = number of *shapes* per step; each shape yields `num_patches`
-# patches (see configs/transform/sdn.yaml), so the effective patch batch is
-# batch_size * num_patches. Under MPI this is the per-GPU batch size.
+# Training reads CACHED 50k-point clouds from dataset_cache/ instead of sampling
+# meshes every step -> fast epochs + patch density matches the 50k test clouds.
+# Build the cache first:  python tools/cache_clouds.py --list datalist/train_sdn.txt
+# batch_size = shapes/step; each yields num_patches patches (configs/transform/sdn.yaml).
 train_dataset:
   shuffle: True
   batch_size: 8
-  num_workers: 0      # Jittor MPI dataloader workers segfault (fork+threads); load in main proc
+  num_workers: 0      # Jittor MPI dataloader workers segfault; load in main proc
   datapath:
-    input_dataset_dir: ./dataset_train
+    input_dataset_dir: ./dataset_cache
     use_prob: True
-    num_files: 10000
+    num_files: 8000
     loader: *loader
     data_name: *data_name
     ignore_check: True
     data_path:
       shapenet: [
-        [./datalist/train.txt, 1.0],
+        [./datalist/train_sdn.txt, 1.0],
       ]
 
 validate_dataset:
   shuffle: False
-  batch_size: 3       # must be >= MPI world_size (3 GPUs); Jittor asserts this
+  batch_size: 3       # must be >= MPI world_size (3 GPUs)
   num_workers: 0
   datapath:
-    input_dataset_dir: ./dataset_train
+    input_dataset_dir: ./dataset_cache
     use_prob: False
     loader: *loader
     data_name: *data_name

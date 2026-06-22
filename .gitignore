@@ -5,7 +5,11 @@
 /experiments
 /dataset_train
 /dataset_test_noisy
+/dataset_cache
+/local_eval
 /result
+/logs
+/datalist/train_sdn.txt
 
 /_pycache_
 

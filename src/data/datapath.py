@@ -50,6 +50,21 @@ class NpyLazyAsset(LazyAsset):
         return asset
 
 @dataclass
+class CleanNpyLazyAsset(LazyAsset):
+    # load a pre-sampled CLEAN point cloud (tools/cache_clouds.py output) as the
+    # clean sampled_vertices -- used for fast cached training (skips mesh
+    # loading + surface sampling every step). The `sample` augment becomes a
+    # no-op; normalize/patch run on this cloud directly.
+    def load(self) -> 'Asset':
+        pc = np.load(self.path).astype(np.float64)
+        asset = Asset(
+            path=self.path,
+            cls=self.cls,
+            sampled_vertices=pc,
+        )
+        return asset
+
+@dataclass
 class Datapath(ConfigSpec):
     """handle input data paths"""
     
@@ -92,6 +107,7 @@ class Datapath(ConfigSpec):
             None: ObjLazyAsset,
             'obj': ObjLazyAsset,
             'npy': NpyLazyAsset,
+            'npy_cloud': CleanNpyLazyAsset,
         }
         input_dataset_dir = kwargs.get('input_dataset_dir', '')
         num_files = kwargs.get('num_files', None)
