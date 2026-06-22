@@ -56,3 +56,29 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
   100 epochs as-is.
 - Auto-iteration: a background waiter blocks until the 3 training procs exit
   (finish or crash) and wakes Claude to analyze + retune + relaunch.
+
+### 2026-06-22 — runs #2–#5: crash triage, loss-spike fix, stable run
+- **run #2** crashed at epoch-0 end: validation `batch_size=1 < world_size=3`
+  (Jittor asserts `batch_size>=world_size` under MPI). Fix: validate `batch_size: 3`;
+  also reordered loop to **save checkpoint before validation** so no epoch is lost.
+- **MPI dataloader workers are unusable**: `num_workers` 4 and 8 both segfault
+  (`SIGCHLD si_status 11`, fork-after-CUDA + threaded scipy/numpy); single-threaded
+  BLAS did NOT help. Settled on `num_workers: 0` (stable). Throughput cost accepted
+  for now (~23 min/epoch, GPU util data-bound).
+- **Loss spikes to ~1e7** (user-reported via WandB): root cause = the
+  `(1-λ)/σ̄+λ` weight diverges when stage-2 samples `Δ=t ⇒ s=0` (clean target,
+  σ̄=0); the old `1e-8` clamp gave weight ~1e6. Fix: floor σ̄ in the weight at
+  `σ̄(t_min)` (≈3e-5 ⇒ weight ≤ ~317). New knob `weight_sigma_floor` (default auto).
+  grad_clip=5 had already kept training stable (spikes were a logging artifact).
+- **run #5 (current, stable)**: `num_workers=0` + σ̄ floor. Verified: no crash,
+  **max loss seen ≈ 618** (was >1e7), losses 0.005–0.05 typical. WandB live.
+- **Inference validated end-to-end** on 1 real test shape (checkpoint_0): correct
+  `(50000,3)` float32, finite, bbox preserved, **~31 s/shape** ⇒ ~1.7 h for 199.
+- **Next iteration targets (priority order):**
+  1. Throughput: precompute/cache per-mesh sampled point clouds to `.npy` and add a
+     fast loader, to remove trimesh sampling from the main-process loop (workers are
+     a dead end under MPI). Target ≪23 min/epoch.
+  2. Density match: training patches use `num_samples=32768`; test clouds are 50k —
+     consider raising toward 50000 so patch density matches test.
+  3. Once a mid/late checkpoint exists, run `scripts/predict_sdn.sh` on the full
+     test set and sanity-check CD/P2S behavior + total inference time.
