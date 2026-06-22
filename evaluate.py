@@ -246,6 +246,9 @@ def main():
     parser.add_argument('--noisy_filename', type=str, default='noisy.npy')
     parser.add_argument('--workers', type=int, default=0,
                         help='并行进程数 (0=自动检测 CPU 核数)')
+    parser.add_argument('--keys_list', type=str, default='',
+                        help='可选：只评测该清单中的样本 (每行 <category>/<model_id>)，'
+                             '用于在留出子集上评测')
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
 
@@ -264,6 +267,18 @@ def main():
     print(f"加速后端: CD=scipy.cKDTree, P2S={'pcu (BVH)' if HAS_PCU else 'cKDTree (vertex approx)'}, workers={n_workers}")
 
     common_keys = sorted(set(pred_samples.keys()) & set(gt_samples.keys()) & set(noisy_samples.keys()))
+
+    if args.keys_list:
+        wanted = set()
+        for line in open(args.keys_list):
+            line = line.strip()
+            if line:
+                # accept both "shapenet/<cat>/<id>" and "<cat>/<id>" forms
+                wanted.add(line)
+                wanted.add('/'.join(line.split('/')[-2:]))
+        common_keys = [k for k in common_keys
+                       if k in wanted or '/'.join(k.split('/')[-2:]) in wanted]
+        print(f"已按 keys_list 过滤到 {len(common_keys)} 个留出样本")
 
     if not common_keys:
         print("错误：未找到匹配的测试样本。")

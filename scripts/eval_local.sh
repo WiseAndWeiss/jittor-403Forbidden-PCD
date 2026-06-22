@@ -42,10 +42,22 @@ rm -rf local_eval/pred
 python run.py --task "$TASK"
 
 # ---- 4. score with evaluate.py (CD + P2S) ----
-echo "[eval_local] scoring ..."
+echo "[eval_local] scoring (full set) ..."
 python evaluate.py \
     --pred_dir local_eval/pred \
     --gt_dir local_eval/gt \
     --noisy_dir local_eval/noisy \
     --mesh_dir "$MESH_DIR" \
     --workers 8
+
+# ---- 4b. honest holdout score (shapes NOT in the training subset) ----
+if [ -f datalist/local_holdout.txt ]; then
+  echo "[eval_local] scoring (TRUE HOLDOUT, no leakage) ..."
+  python evaluate.py \
+      --pred_dir local_eval/pred \
+      --gt_dir local_eval/gt \
+      --noisy_dir local_eval/noisy \
+      --mesh_dir "$MESH_DIR" \
+      --keys_list datalist/local_holdout.txt \
+      --workers 8
+fi
