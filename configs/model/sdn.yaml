@@ -15,12 +15,12 @@ t_min: 1                      # minimum sampled diffusion timestep
 weight_sigma_floor: null
 
 # ---- network architecture (Sec 4.1) ----
-feat_dim: 128                 # DGCNN embedding / fused-feature dim
+feat_dim: 256                 # DGCNN embedding / fused-feature dim (baseline vm uses 512)
 k_graph: 32                   # DGCNN dynamic-graph k
 k_grad: 32                    # neighbours for gradient fusion (paper k=32)
 num_pos_freqs: 6              # Fourier positional-encoding bands
 time_dim: 64                  # timestep embedding dim
-grad_hidden: 128             # gradient-prediction MLP width
+grad_hidden: 256             # gradient-prediction MLP width
 num_res_blocks: 4            # residual blocks in gradient prediction (paper: 4)
 
 # ---- adaptive & iterative denoising (Algorithm 2) ----
@@ -30,8 +30,8 @@ predict_seed_k: 3             # patch overlap factor (#patches = seed_k * N / M)
 predict_patch_step: 16        # patches processed per forward batch
 
 # output post-processing (outlier pull-in + light normal-direction smoothing).
-# Cleans residual surface roughness -> improves CD & P2S (esp. while the model is
-# still undertrained). Re-tune pca_smooth_alpha down as the model converges.
-predict_post_smooth: true
-pca_smooth_alpha: 0.4
+# OFF by default: it only helps a weak model and HURTS a strong one (trades surface
+# fidelity for smoothness). Kept as an optional tool, not a crutch.
+predict_post_smooth: false
+pca_smooth_alpha: 0.0
 predict_noise_scale: 1.0      # noise-estimate scale (sweep showed score ~flat in it)

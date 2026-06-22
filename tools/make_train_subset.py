@@ -12,6 +12,7 @@ Usage:
 """
 import argparse
 import collections
+import os
 import random
 
 
@@ -21,12 +22,18 @@ def main():
     ap.add_argument('--out', default='datalist/train_sdn.txt')
     ap.add_argument('--cap', type=int, default=400)
     ap.add_argument('--seed', type=int, default=2026)
+    ap.add_argument('--exclude', default='',
+                    help='optional datalist of shapes to hold out of training (true holdout)')
     args = ap.parse_args()
+
+    excluded = set()
+    if args.exclude and os.path.exists(args.exclude):
+        excluded = {l.strip() for l in open(args.exclude) if l.strip()}
 
     by = collections.defaultdict(list)
     for line in open(args.train):
         line = line.strip()
-        if line:
+        if line and line not in excluded:
             by[line.split('/')[1]].append(line)
 
     rng = random.Random(args.seed)
