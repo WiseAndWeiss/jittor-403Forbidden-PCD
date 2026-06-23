@@ -169,6 +169,16 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
 - Plan: eval holdout at ckpt 30/60/100; if it plateaus <70-80, scale capacity
   (feat_dim 32->64/96, flow_hidden, nflow, n_injector) and/or predict_iters>1.
 
+### 2026-06-24 — PD-Flow lite plateaus 68; capacity bump + iterative inference; OVERNIGHT AUTO-LOOP
+- **Inference win (no retrain):** iters=2/seed_k=4 -> +8 (60->68). iters=3 worse. Default now iters=2.
+- **Lite (170K) plateaus ~68** (e30=67.95, e62=67.44). Backed up to experiments/pdf_lite/ (FALLBACK).
+- **Bigger (672K, feat64/hidden128/nflow12/aug61) + multi-GPU (BN sync=False):** epoch30 holdout
+  **56** (< lite 68) with LOWER train loss -> generalization gap. Investigating climbing-vs-stuck
+  via ckpt15 eval. Likely fix if stuck: lower lr (3e-4..5e-4) + weight_decay + bigger batch.
+- **OVERNIGHT AUTONOMOUS LOOP (user asleep):** rules in memory/pdf-autoloop-state.md. Each
+  background watcher wakes Claude -> eval holdout -> decide (keep/kill+fix-retrain) -> re-arm.
+  Keep BEST (>=68); generate result_pdf.zip from best when a model clears ~72. Never lose lite 68.
+
 ### 2026-06-23 — CRITICAL: loss-weight collapse bug found & fixed (run #8)
 - feat256 holdout **DECREASED** with training: e15=39.09 -> e30=33.86, while train
   loss kept dropping. Loss is MISALIGNED with the metric. (feat256@15 < feat128@15
