@@ -16,13 +16,16 @@ def get_knn_idx(x, k):
 
 
 def knn_gather(f, idx):
-    """Gather neighbour features. f:(B,N,C), idx:(B,M,k) -> (B,M,k,C)."""
+    """Gather neighbour features. f:(B,N,C), idx:(B,M,k) -> (B,M,k,C).
+
+    Vectorised (single gather, no Python loop over the batch) -- the per-batch
+    loop was the main speed bottleneck.
+    """
     B, N, C = f.shape
     M, k = idx.shape[1], idx.shape[2]
-    out = []
-    for b in range(B):
-        out.append(f[b][idx[b].reshape(-1)].reshape(M, k, C))
-    return jt.stack(out, dim=0)
+    base = (jt.arange(B) * N).reshape(B, 1, 1)
+    idx_flat = (idx + base).reshape(-1)                # (B*M*k,)
+    return f.reshape(B * N, C)[idx_flat].reshape(B, M, k, C)
 
 
 class noiseEdgeConv(nn.Module):
