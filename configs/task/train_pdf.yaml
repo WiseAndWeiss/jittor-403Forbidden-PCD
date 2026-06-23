@@ -13,8 +13,8 @@ loss:
 
 optimizer:
   __target__: adam
-  lr: 0.001
-  weight_decay: 0.0
+  lr: 0.0003             # lowered for the 672K model (lr 1e-3 overfit/degraded)
+  weight_decay: 0.0001   # regularization to close the generalization gap
 
 trainer:
   epochs: 100
