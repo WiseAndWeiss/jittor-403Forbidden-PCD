@@ -141,6 +141,23 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
   feat256 underperforms, go 512. Other levers: lambda tuned to 0.5-2% noise,
   denser NN reference for GT score, longer training.
 
+### 2026-06-23 — SDN converged ~50; pivot to PD-Flow (PD-LTS core idea)
+- SDN feat128+lossfix converged: full-32 **49.82**, holdout-19 **48.23** (CD 34,
+  P2S 62). Loss fix worked (holdout 41->42->48) but CD ceiling (under-denoise /
+  coverage) keeps it ~50, far from the team's 76-79. Decision (with user): pivot.
+- Researched 2024-2026 SOTA (survey arXiv 2508.17011): denoising SOTA is still
+  2024-25 (PD-LTS best CD at 1% noise, then ASDN, 3DMambaIPF). No clearly stronger
+  2026 method. Chose **PD-LTS**.
+- PD-LTS actual code = implicit monotone residual flow (fixed-point + spectral
+  norm) + EMD CUDA -> faithful port too heavy/risky. User chose the **core-idea**
+  route: reproduce as **PD-Flow** (src/model/pdf): xyz augment -> EdgeConv feature
+  injectors -> invertible flow (ActNorm + affine coupling, closed-form) -> zero a
+  latent noise subspace (FBM) -> invert to clean. **Chamfer loss** (aligned with
+  the metric, unlike SDN's score-matching).
+- Smoke + real-data pass; 170K params (lite). Training run on GPUs 1,3 (~6.4
+  min/epoch, CD ~2e-4). Eval true holdout at ckpt 10/25. If lite plateaus, scale
+  capacity (feat_dim/flow_hidden/nflow). Speed TODO: vectorize knn_gather loop.
+
 ### 2026-06-23 — CRITICAL: loss-weight collapse bug found & fixed (run #8)
 - feat256 holdout **DECREASED** with training: e15=39.09 -> e30=33.86, while train
   loss kept dropping. Loss is MISALIGNED with the metric. (feat256@15 < feat128@15
