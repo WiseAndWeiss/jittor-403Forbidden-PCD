@@ -158,6 +158,17 @@ training status over SSH and, when a run finishes (or stalls), inspects the loss
   min/epoch, CD ~2e-4). Eval true holdout at ckpt 10/25. If lite plateaus, scale
   capacity (feat_dim/flow_hidden/nflow). Speed TODO: vectorize knn_gather loop.
 
+### 2026-06-23 — PD-Flow works: beats SDN at epoch 10
+- **MPI is unusable for PD-Flow**: BatchNorm all-reduce deadlocks (validation AND
+  epoch boundary, GPUs 100% busy-wait). Fix: **single-GPU (NP=1)** -> no collectives,
+  rock-solid. Also vectorized knn_gather (single gather, no per-batch loop) and
+  num_files 8000->4000 (~5 min/epoch, ~8h/100ep on 1 GPU).
+- **PD-Flow @ epoch 10 holdout = 53.31** (CD 42.3, P2S 64.3) -> already beats SDN's
+  fully-converged 48.23 (CD 34). The CD-aligned Chamfer loss fixes the CD bottleneck
+  that score-matching couldn't. 170K params (lite), still climbing.
+- Plan: eval holdout at ckpt 30/60/100; if it plateaus <70-80, scale capacity
+  (feat_dim 32->64/96, flow_hidden, nflow, n_injector) and/or predict_iters>1.
+
 ### 2026-06-23 — CRITICAL: loss-weight collapse bug found & fixed (run #8)
 - feat256 holdout **DECREASED** with training: e15=39.09 -> e30=33.86, while train
   loss kept dropping. Loss is MISALIGNED with the metric. (feat256@15 < feat128@15
