@@ -9,6 +9,21 @@ import jittor as jt
 from jittor import nn
 
 
+def bn2d(c):
+    """BatchNorm2d with cross-GPU sync DISABLED. Jittor's default sync=True
+    all-reduces stats under MPI and deadlocks PD-Flow at the epoch/validation
+    boundary; per-GPU stats (sync=False) avoid it and are standard BN behavior."""
+    m = nn.BatchNorm2d(c)
+    m.sync = False
+    return m
+
+
+def bn1d(c):
+    m = nn.BatchNorm1d(c)
+    m.sync = False
+    return m
+
+
 def get_knn_idx(x, k):
     """k nearest neighbours (including self) of every point. x:(B,N,C)->idx:(B,N,k)."""
     _, idx = jt.misc.knn(x, x, k)
@@ -59,7 +74,7 @@ class PreConv(nn.Module):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channel * 2, out_channel, 1),
-            nn.BatchNorm2d(out_channel),
+            bn2d(out_channel),
             nn.LeakyReLU(0.05),
         )
 
@@ -81,10 +96,10 @@ class EdgeConv(nn.Module):
             hidden_channel = hidden_channel + 32
         self.conv1 = nn.Sequential(
             nn.Conv2d(in_channel * 2, hidden_channel, 1),
-            nn.BatchNorm2d(hidden_channel), nn.LeakyReLU(0.05))
+            bn2d(hidden_channel), nn.LeakyReLU(0.05))
         self.conv2 = nn.Sequential(
             nn.Conv2d(hidden_channel, out_channel, 1),
-            nn.BatchNorm2d(out_channel), nn.LeakyReLU(0.05))
+            bn2d(out_channel), nn.LeakyReLU(0.05))
 
     def execute(self, f, knn_idx):
         knn_feat = knn_gather(f, knn_idx)
@@ -106,10 +121,10 @@ class FeatMergeUnit(nn.Module):
         super().__init__()
         self.conv1 = nn.Sequential(
             nn.Conv1d(in_channel, hidden_channel, 1),
-            nn.BatchNorm1d(hidden_channel), nn.ReLU())
+            bn1d(hidden_channel), nn.ReLU())
         self.conv2 = nn.Sequential(
             nn.Conv1d(hidden_channel, out_channel, 1),
-            nn.BatchNorm1d(out_channel), nn.ReLU())
+            bn1d(out_channel), nn.ReLU())
 
     def execute(self, x):
         x = x.transpose(1, 2)
