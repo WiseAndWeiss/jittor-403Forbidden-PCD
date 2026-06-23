@@ -1,0 +1,22 @@
+data_name: &data_name cloud.npy
+loader: &loader npy_cloud      # pre-sampled clean clouds (tools/cache_clouds.py)
+
+# Same cached 50k clouds as train_sdn, but with NO validate_dataset: PD-Flow uses
+# BatchNorm, which all-reduces stats under MPI; the validation set splits
+# unevenly across ranks and deadlocks on the last batch. We rely on the external
+# leak-free holdout eval (scripts/eval_local.sh) instead of in-training validation.
+train_dataset:
+  shuffle: True
+  batch_size: 8
+  num_workers: 0
+  datapath:
+    input_dataset_dir: ./dataset_cache
+    use_prob: True
+    num_files: 8000
+    loader: *loader
+    data_name: *data_name
+    ignore_check: True
+    data_path:
+      shapenet: [
+        [./datalist/train_sdn.txt, 1.0],
+      ]

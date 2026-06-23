@@ -2,7 +2,7 @@ mode: train
 debug: False
 
 components:
-  data: train_sdn          # reuse cached 50k clouds (dataset_cache, npy_cloud)
+  data: train_pdf          # cached 50k clouds, NO in-training validation (MPI/BN deadlock)
   transform: pdf
   system: pdf
   model: pdf
