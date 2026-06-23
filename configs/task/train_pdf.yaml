@@ -1,0 +1,29 @@
+mode: train
+debug: False
+
+components:
+  data: train_sdn          # reuse cached 50k clouds (dataset_cache, npy_cloud)
+  transform: pdf
+  system: pdf
+  model: pdf
+
+loss:
+  loss: 1.0                # Chamfer distance (denoised vs clean)
+  cd_loss: 0.0             # logged only
+
+optimizer:
+  __target__: adam
+  lr: 0.001
+  weight_decay: 0.0
+
+trainer:
+  epochs: 100
+  warmup_epochs: 3
+  log_interval: 20
+  grad_clip: 0.0
+
+wandb:
+  enabled: true
+  project: pdf-pcdenoise
+  name: null
+  mode: online

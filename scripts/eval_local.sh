@@ -36,8 +36,9 @@ if [ -z "$CKPT" ]; then echo "[eval_local] no checkpoint found in experiments/sd
 echo "[eval_local] checkpoint: $CKPT"
 
 # ---- 3. denoise the local val set ----
+PREDICT_TASK="${PREDICT_TASK:-configs/task/predict_local_sdn.yaml}"
 TASK="$(mktemp --suffix=.yaml)"
-sed "s#^load_ckpt:.*#load_ckpt: ${CKPT}#" configs/task/predict_local_sdn.yaml > "$TASK"
+sed "s#^load_ckpt:.*#load_ckpt: ${CKPT}#" "$PREDICT_TASK" > "$TASK"
 rm -rf local_eval/pred
 python run.py --task "$TASK"
 

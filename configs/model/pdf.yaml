@@ -1,0 +1,16 @@
+__target__: PDFlowModule
+
+# ---- invertible flow + latent disentanglement (PD-Flow core idea) ----
+aug_channel: 33               # augmentation channels (pc 3 + aug 33 = 36, even)
+cut_channel: 6                # latent noise subspace zeroed out (fixed binary mask)
+num_neighbors: 32             # kNN for graph-conv features
+n_injector: 7                 # feature-injection steps
+nflow_module: 8               # flow blocks (ActNorm + affine coupling)
+feat_dim: 32                  # graph-conv feature width
+flow_hidden: 64               # coupling MLP width
+
+# ---- inference (patch-based) ----
+predict_patch_size: 1024
+predict_seed_k: 3             # patch overlap factor
+predict_iters: 1             # repeat whole-cloud denoising N times
+predict_patch_step: 16        # patches per forward batch
