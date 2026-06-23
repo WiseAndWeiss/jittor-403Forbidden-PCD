@@ -11,6 +11,6 @@ flow_hidden: 64               # coupling MLP width
 
 # ---- inference (patch-based) ----
 predict_patch_size: 1024
-predict_seed_k: 3             # patch overlap factor
-predict_iters: 1             # repeat whole-cloud denoising N times
+predict_seed_k: 4             # patch overlap factor (more overlap -> better CD coverage)
+predict_iters: 2             # iterative denoising passes (PD-LTS-style; big quality win)
 predict_patch_step: 16        # patches per forward batch
