@@ -12,7 +12,7 @@ train_dataset:
   datapath:
     input_dataset_dir: ./dataset_cache
     use_prob: True
-    num_files: 8000
+    num_files: 4000        # ~500 steps/epoch on 1 GPU (each cached cloud seen ~once)
     loader: *loader
     data_name: *data_name
     ignore_check: True
