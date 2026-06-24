@@ -39,14 +39,18 @@ def sinkhorn_emd(x, y, eps=0.01, n_iter=50):
     1-to-1 transport -> rewards a uniform point distribution, directly targeting
     the CD-coverage bottleneck. This is the loss PD-LTS / PD-Flow use."""
     B, N, _ = x.shape
-    C = ((x.unsqueeze(2) - y.unsqueeze(1)) ** 2).sum(-1)        # (B,N,N) cost
-    K = jt.exp(-C / eps)                                        # Gibbs kernel
-    a = jt.ones((B, N, 1)) / N                                  # uniform marginals
-    u = jt.ones((B, N, 1))
-    for _ in range(n_iter):
-        v = a / (jt.matmul(K.transpose(1, 2), u) + 1e-8)
-        u = a / (jt.matmul(K, v) + 1e-8)
-    T = u * K * v.transpose(1, 2)                               # transport plan (B,N,N)
+    C = ((x.unsqueeze(2) - y.unsqueeze(1)) ** 2).sum(-1)        # (B,N,N) cost (grad via x)
+    # Solve for the optimal transport plan WITHOUT grad (envelope theorem): backprop
+    # through 50 unrolled Sinkhorn steps is huge; instead freeze the plan and let the
+    # gradient flow only through the cost C -> a stable soft-EMD matching loss.
+    with jt.no_grad():
+        K = jt.exp(-C / eps)                                   # Gibbs kernel
+        a = jt.ones((B, N, 1)) / N                             # uniform marginals
+        u = jt.ones((B, N, 1))
+        for _ in range(n_iter):
+            v = a / (jt.matmul(K.transpose(1, 2), u) + 1e-8)
+            u = a / (jt.matmul(K, v) + 1e-8)
+        T = u * K * v.transpose(1, 2)                          # transport plan (B,N,N)
     return (T * C).sum(dims=[1, 2]).mean()
 
 

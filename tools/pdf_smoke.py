@@ -25,10 +25,15 @@ batch = {'pc_noisy': jt.array(noisy), 'pc_clean': jt.array(clean)}
 
 model.train()
 opt = jt.optim.Adam(model.parameters(), lr=1e-3)
+import time
 for it in range(3):
+    t0 = time.time()
     out = model.training_step(batch)
     opt.step(out['loss'])
-    print(f'[smoke] train it{it} cd={out["loss"].item():.6f}')
+    dt = time.time() - t0
+    print(f'[smoke] train it{it} loss={out["loss"].item():.6f} '
+          f'cd={out["cd_loss"].item():.6f} emd={out["emd_loss"].item():.6f} '
+          f'({dt:.2f}s)')
 
 model.eval(); model.set_predict(True)
 N = 3000
