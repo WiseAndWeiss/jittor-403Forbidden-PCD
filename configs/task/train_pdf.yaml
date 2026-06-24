@@ -8,9 +8,10 @@ components:
   model: pdf
 
 loss:
-  loss: 1.0                # CD + sinkhorn_weight * EMD (combined in the module)
+  loss: 1.0                # cd_weight*CD + p2p_weight*P2P (combined in the module)
   cd_loss: 0.0             # logged only
-  emd_loss: 0.0            # logged only (Sinkhorn-EMD term)
+  p2p_loss: 0.0            # logged only (point-to-plane / P2S term)
+  emd_loss: 0.0            # logged only (Sinkhorn-EMD term, disabled)
 
 optimizer:
   __target__: adam
