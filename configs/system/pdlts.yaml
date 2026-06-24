@@ -1,0 +1,4 @@
+__target__: vm                 # reuse the generic VMSystem
+
+ckpt_save_dir: experiments/pdlts
+ckpt_save_name: checkpoint

@@ -1,0 +1,21 @@
+data_name: &data_name cloud.npy
+loader: &loader npy_cloud      # pre-sampled clean clouds (tools/cache_clouds.py)
+
+# Same cached 50k clouds as PD-Flow. Smaller batch than train_pdf: the PD-LTS
+# monotone flow + growing-concat EdgeConv features are memory-heavy, and the shared
+# server is often near-full. batch_size 4 * 4 patches = 16 patches/step.
+train_dataset:
+  shuffle: True
+  batch_size: 2            # *4 patches = 8 patches/step (~10GB; shared server is full)
+  num_workers: 0
+  datapath:
+    input_dataset_dir: ./dataset_cache
+    use_prob: True
+    num_files: 2000        # ~1000 steps/epoch at batch 2
+    loader: *loader
+    data_name: *data_name
+    ignore_check: True
+    data_path:
+      shapenet: [
+        [./datalist/train_sdn.txt, 1.0],
+      ]

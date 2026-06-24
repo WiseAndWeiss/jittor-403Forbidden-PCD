@@ -1,0 +1,23 @@
+__target__: PDLTSModule
+
+# ---- PD-LTS light model (faithful) ----
+aug_channel: 32               # pc 3 + aug 32 = 35 channel
+cut_channel: 6                # FBM: zero last 6 latent channels
+num_neighbors: 32             # kNN for graph-conv features
+n_injector: 7                 # feature-injection steps
+nflow_module: 8               # FlowAssembly count (each = 2 MonotoneBlock + 2 ActNorm)
+idim: 64                      # spectral MLP hidden width
+nhidden: 2                    # spectral MLP hidden layers
+coeff: 0.9                    # spectral-norm Lipschitz bound (<1 -> Banach converges)
+n_fixed_iter: 15              # Banach fixed-point iters (Lip~0.73 -> ~0.8% err, ok for train)
+
+# ---- loss ----
+loss_type: cd                 # 'cd' to validate the flow port first, then 'emd'
+emd_eps: 0.003
+emd_iters: 60
+
+# ---- inference (patch-based) ----
+predict_patch_size: 1024
+predict_seed_k: 3
+predict_iters: 1
+predict_patch_step: 8

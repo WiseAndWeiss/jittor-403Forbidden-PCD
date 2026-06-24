@@ -3,6 +3,7 @@ from .vm import VelocityModule
 from .asdn import ClassifyModule, ASDNModule
 from .sdn import SDNModule
 from .pdf import PDFlowModule
+from .pdlts import PDLTSModule
 
 def get_model(model_config, **kwargs) -> ModelSpec:
     MAP = {
@@ -11,6 +12,7 @@ def get_model(model_config, **kwargs) -> ModelSpec:
         'ASDNModule': ASDNModule,
         'SDNModule': SDNModule,
         'PDFlowModule': PDFlowModule,
+        'PDLTSModule': PDLTSModule,
     }
     __target__ = model_config['__target__']
     del model_config['__target__']

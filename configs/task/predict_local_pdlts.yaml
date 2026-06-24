@@ -1,0 +1,14 @@
+mode: predict
+debug: False
+load_ckpt: experiments/pdlts/checkpoint_latest.pkl
+
+components:
+  data: predict_local
+  transform: pdf
+  system: pdlts
+  model: pdlts
+
+writer:
+  __target__: vm
+  save_dir: local_eval/pred
+  save_name: denoised
