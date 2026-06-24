@@ -32,6 +32,24 @@ def chamfer_distance(a, b):
     return jt.min(dist, dim=2).mean() + jt.min(dist, dim=1).mean()
 
 
+def sinkhorn_emd(x, y, eps=0.01, n_iter=50):
+    """Differentiable entropic-OT (Sinkhorn) approximation of Earth-Mover's
+    distance between two equal-size clouds (B,N,3). Unlike Chamfer (which allows
+    many-to-one matches and tolerates clustering/gaps), EMD enforces a balanced
+    1-to-1 transport -> rewards a uniform point distribution, directly targeting
+    the CD-coverage bottleneck. This is the loss PD-LTS / PD-Flow use."""
+    B, N, _ = x.shape
+    C = ((x.unsqueeze(2) - y.unsqueeze(1)) ** 2).sum(-1)        # (B,N,N) cost
+    K = jt.exp(-C / eps)                                        # Gibbs kernel
+    a = jt.ones((B, N, 1)) / N                                  # uniform marginals
+    u = jt.ones((B, N, 1))
+    for _ in range(n_iter):
+        v = a / (jt.matmul(K.transpose(1, 2), u) + 1e-8)
+        u = a / (jt.matmul(K, v) + 1e-8)
+    T = u * K * v.transpose(1, 2)                               # transport plan (B,N,N)
+    return (T * C).sum(dims=[1, 2]).mean()
+
+
 class PDFlowModule(ModelSpec):
 
     def __init__(self, model_config, transform_config):
@@ -48,6 +66,12 @@ class PDFlowModule(ModelSpec):
         self.nflow = cfg.get('nflow_module', 8)
         feat_dim = cfg.get('feat_dim', 32)
         hidden = cfg.get('flow_hidden', 64)
+
+        # ---- loss: Chamfer + Sinkhorn-EMD (distribution) ----
+        self.cd_weight = cfg.get('cd_weight', 1.0)
+        self.sinkhorn_weight = cfg.get('sinkhorn_weight', 0.0)
+        self.sinkhorn_eps = cfg.get('sinkhorn_eps', 0.01)
+        self.sinkhorn_iters = cfg.get('sinkhorn_iters', 50)
 
         # ---- augmentation + graph-conv feature injectors ----
         self.noise_params = noiseEdgeConv(self.pc_channel, hidden_channel=feat_dim,
@@ -116,14 +140,20 @@ class PDFlowModule(ModelSpec):
     def get_supervised_loss(self, pc_noisy, pc_clean):
         denoised = self.denoise(pc_noisy)
         cd = chamfer_distance(denoised, pc_clean)
-        return cd
+        if self.sinkhorn_weight > 0:
+            emd = sinkhorn_emd(denoised, pc_clean, eps=self.sinkhorn_eps,
+                               n_iter=self.sinkhorn_iters)
+        else:
+            emd = jt.array(0.0)
+        loss = self.cd_weight * cd + self.sinkhorn_weight * emd
+        return loss, cd, emd
 
     def training_step(self, batch: Dict) -> Dict:
         patch_size = batch['pc_noisy'].shape[-2]
         pc_noisy = batch['pc_noisy'].reshape(-1, patch_size, 3)
         pc_clean = batch['pc_clean'].reshape(-1, patch_size, 3)
-        cd = self.get_supervised_loss(pc_noisy, pc_clean)
-        return {"loss": cd, "cd_loss": cd}
+        loss, cd, emd = self.get_supervised_loss(pc_noisy, pc_clean)
+        return {"loss": loss, "cd_loss": cd, "emd_loss": emd}
 
     def execute(self, **kwargs) -> Dict:    # type: ignore
         return self.training_step(**kwargs)
