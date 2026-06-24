@@ -19,7 +19,7 @@ from typing import Dict, List
 import jittor as jt
 import numpy as np
 
-from .feature import noiseEdgeConv, PreConv, EdgeConv, FeatMergeUnit, get_knn_idx
+from .feature import noiseEdgeConv, PreConv, EdgeConv, FeatMergeUnit, get_knn_idx, knn_gather
 from .flow import FlowBlock
 from ..spec import ModelSpec
 from ...data.asset import Asset
@@ -54,6 +54,45 @@ def sinkhorn_emd(x, y, eps=0.01, n_iter=50):
     return (T * C).sum(dims=[1, 2]).mean()
 
 
+def estimate_normals(pc, k=16, n_power=15):
+    """Per-point surface normals via local PCA: the eigenvector of the kNN
+    covariance with the SMALLEST eigenvalue. pc:(B,N,3) -> normals:(B,N,3).
+    No grad (describes the clean target geometry, not a learned output).
+
+    GPU eigh needs cupy (absent), so we get the smallest eigenvector of the 3x3
+    covariance by power-iterating A = trace(cov)*I - cov, whose LARGEST eigenvector
+    is cov's smallest -- pure batched matmul, no external dependency."""
+    with jt.no_grad():
+        idx = get_knn_idx(pc, k)                               # (B,N,k) self-kNN
+        nbrs = knn_gather(pc, idx)                             # (B,N,k,3)
+        nbrs = nbrs - nbrs.mean(dim=2, keepdims=True)
+        cov = jt.matmul(nbrs.transpose(0, 1, 3, 2), nbrs) / k  # (B,N,3,3)
+        B, N = cov.shape[0], cov.shape[1]
+        tr = cov[..., 0, 0] + cov[..., 1, 1] + cov[..., 2, 2]  # (B,N)
+        eye = jt.array(np.eye(3, dtype=np.float32)).reshape(1, 1, 3, 3)
+        A = tr.unsqueeze(-1).unsqueeze(-1) * eye - cov         # largest eigvec = normal
+        v = jt.array(np.array([1.0, 0.5, 0.25], dtype=np.float32))  # asymmetric init
+        v = (v / v.norm()).reshape(1, 1, 3, 1).broadcast([B, N, 3, 1])
+        for _ in range(n_power):
+            v = jt.matmul(A, v)                                # (B,N,3,1)
+            v = v / (jt.sqrt((v * v).sum(2, keepdims=True)) + 1e-12)
+        return v.reshape(B, N, 3)
+
+
+def point_to_plane(pred, clean, normals):
+    """For each predicted point, the squared distance to the tangent plane of its
+    nearest clean point: ((pred - clean_nn) . n_nn)^2.  Penalizes ONLY the
+    off-surface (normal) error and lets points slide freely along the surface, so
+    a distribution term (EMD) can redistribute them tangentially without fighting
+    fidelity.  ~ the competition P2S metric. pred,clean,normals:(B,N,3)."""
+    d2 = ((pred.unsqueeze(2) - clean.unsqueeze(1)) ** 2).sum(-1)   # (B,N,M)
+    nn_idx = jt.argmin(d2, dim=2)[0].unsqueeze(-1)                 # (B,N,1) nearest clean
+    clean_nn = knn_gather(clean, nn_idx)[:, :, 0]                  # (B,N,3)
+    nrm_nn = knn_gather(normals, nn_idx)[:, :, 0]                  # (B,N,3)
+    resid = pred - clean_nn                                        # (B,N,3)
+    return (((resid * nrm_nn).sum(-1)) ** 2).mean()
+
+
 class PDFlowModule(ModelSpec):
 
     def __init__(self, model_config, transform_config):
@@ -71,8 +110,10 @@ class PDFlowModule(ModelSpec):
         feat_dim = cfg.get('feat_dim', 32)
         hidden = cfg.get('flow_hidden', 64)
 
-        # ---- loss: Chamfer + Sinkhorn-EMD (distribution) ----
+        # ---- loss: CD (point-point) + point-to-plane (P2S) + Sinkhorn-EMD ----
         self.cd_weight = cfg.get('cd_weight', 1.0)
+        self.p2p_weight = cfg.get('p2p_weight', 0.0)           # point-to-plane (P2S proxy)
+        self.p2p_normal_k = cfg.get('p2p_normal_k', 16)        # kNN for normal estimation
         self.sinkhorn_weight = cfg.get('sinkhorn_weight', 0.0)
         self.sinkhorn_eps = cfg.get('sinkhorn_eps', 0.01)
         self.sinkhorn_iters = cfg.get('sinkhorn_iters', 50)
@@ -143,21 +184,27 @@ class PDFlowModule(ModelSpec):
     # ------------------------------------------------------------------ #
     def get_supervised_loss(self, pc_noisy, pc_clean):
         denoised = self.denoise(pc_noisy)
-        cd = chamfer_distance(denoised, pc_clean)
+        cd = chamfer_distance(denoised, pc_clean) if self.cd_weight > 0 else jt.array(0.0)
+        if self.p2p_weight > 0:
+            normals = estimate_normals(pc_clean, k=self.p2p_normal_k)
+            p2p = point_to_plane(denoised, pc_clean, normals)
+        else:
+            p2p = jt.array(0.0)
         if self.sinkhorn_weight > 0:
             emd = sinkhorn_emd(denoised, pc_clean, eps=self.sinkhorn_eps,
                                n_iter=self.sinkhorn_iters)
         else:
             emd = jt.array(0.0)
-        loss = self.cd_weight * cd + self.sinkhorn_weight * emd
-        return loss, cd, emd
+        loss = (self.cd_weight * cd + self.p2p_weight * p2p
+                + self.sinkhorn_weight * emd)
+        return loss, cd, p2p, emd
 
     def training_step(self, batch: Dict) -> Dict:
         patch_size = batch['pc_noisy'].shape[-2]
         pc_noisy = batch['pc_noisy'].reshape(-1, patch_size, 3)
         pc_clean = batch['pc_clean'].reshape(-1, patch_size, 3)
-        loss, cd, emd = self.get_supervised_loss(pc_noisy, pc_clean)
-        return {"loss": loss, "cd_loss": cd, "emd_loss": emd}
+        loss, cd, p2p, emd = self.get_supervised_loss(pc_noisy, pc_clean)
+        return {"loss": loss, "cd_loss": cd, "p2p_loss": p2p, "emd_loss": emd}
 
     def execute(self, **kwargs) -> Dict:    # type: ignore
         return self.training_step(**kwargs)

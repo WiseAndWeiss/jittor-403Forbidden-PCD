@@ -14,6 +14,10 @@ from src.model.parse import get_model
 
 mcfg = OmegaConf.to_container(OmegaConf.load('configs/model/pdf.yaml'), resolve=True)
 tcfg = OmegaConf.to_container(OmegaConf.load('configs/transform/pdf.yaml'), resolve=True)
+# force-enable all loss terms so the smoke exercises every path
+mcfg['cd_weight'] = 1.0
+mcfg['p2p_weight'] = 1.0
+mcfg['sinkhorn_weight'] = 0.5
 model = get_model(model_config=mcfg, transform_config=tcfg)
 print('[smoke] params:', sum(p.numel() for p in model.parameters()))
 
@@ -32,8 +36,8 @@ for it in range(3):
     opt.step(out['loss'])
     dt = time.time() - t0
     print(f'[smoke] train it{it} loss={out["loss"].item():.6f} '
-          f'cd={out["cd_loss"].item():.6f} emd={out["emd_loss"].item():.6f} '
-          f'({dt:.2f}s)')
+          f'cd={out["cd_loss"].item():.6f} p2p={out["p2p_loss"].item():.6f} '
+          f'emd={out["emd_loss"].item():.6f} ({dt:.2f}s)')
 
 model.eval(); model.set_predict(True)
 N = 3000
