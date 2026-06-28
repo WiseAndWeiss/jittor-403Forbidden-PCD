@@ -12,8 +12,15 @@ def remove_self_loops(edge_index):
 
 
 class EdgeConv(nn.Module):
-    """EdgeConv with mean aggregation (official uses max, but Jittor scatter
-    maximum lacks gradient support; mean works and the network adapts)."""
+    """EdgeConv with max aggregation (matches official ASDN aggr='max').
+
+    Jittor's scatter(reduce='max') has no gradient, so instead of scattering we
+    group messages by destination node and take the per-channel max. Each node
+    has exactly `deg` neighbours laid out contiguously in `dst` (knn drops the
+    nearest=self entry, so remove_self_loops removes nothing), which makes the
+    reshape exact; max over the reshaped [N, deg, C] tensor backprops correctly
+    to the arg-max neighbour. A mean fallback covers the rare non-uniform case
+    (e.g. duplicate points)."""
 
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -42,11 +49,20 @@ class EdgeConv(nn.Module):
         msg = self.mlp(tmp)
 
         N = x.shape[0]
-        out = jt.zeros((N, msg.shape[1]))
-        cnt = jt.zeros((N, msg.shape[1]))
-        out = out.scatter_(0, dst.unsqueeze(1).broadcast(msg.shape), msg, reduce='add')
-        cnt = cnt.scatter_(0, dst.unsqueeze(1).broadcast(msg.shape), jt.ones_like(msg), reduce='add')
-        out = out / (cnt + 1)
+        C = msg.shape[1]
+        n_edges = msg.shape[0]
+        deg = n_edges // N
+        if deg * N == n_edges:
+            # Uniform degree (the normal case): group by destination node and
+            # take the per-channel max == official EdgeConv aggr='max'.
+            out = msg.reshape(N, deg, C).max(dim=1)
+        else:
+            # Fallback: non-uniform degree -> mean aggregation.
+            out = jt.zeros((N, C))
+            cnt = jt.zeros((N, C))
+            out = out.scatter_(0, dst.unsqueeze(1).broadcast(msg.shape), msg, reduce='add')
+            cnt = cnt.scatter_(0, dst.unsqueeze(1).broadcast(msg.shape), jt.ones_like(msg), reduce='add')
+            out = out / (cnt + 1)
 
         out_2 = self.lin(x)
         return out + out_2

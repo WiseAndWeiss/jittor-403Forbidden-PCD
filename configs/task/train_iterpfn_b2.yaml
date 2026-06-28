@@ -1,0 +1,31 @@
+mode: train
+debug: False
+load_ckpt: null
+
+components:
+  data: train_iterpfn_b8
+  transform: asdn
+  system: iterpfn_b2
+  model: iterpfn_b2
+
+loss:
+  loss: 1.0
+  l1: 0.0
+  l2: 0.0
+  l3: 0.0
+
+optimizer:
+  __target__: adam
+  lr: 0.0001
+  weight_decay: 0.0
+
+trainer:
+  epochs: 12
+  warmup_epochs: 1
+  log_interval: 20
+
+wandb:
+  enabled: true
+  project: asdn-pcdenoise
+  name: iterpfn-base281-t3
+  mode: online

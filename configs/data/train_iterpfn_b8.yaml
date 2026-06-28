@@ -3,8 +3,8 @@ loader: &loader obj
 
 train_dataset:
   shuffle: True
-  batch_size: 32
-  num_workers: 8
+  batch_size: 8
+  num_workers: 4
   datapath:
     input_dataset_dir: ./dataset_train
     use_prob: True
@@ -15,19 +15,4 @@ train_dataset:
     data_path:
       shapenet: [
         [./datalist/train.txt, 1.0],
-      ]
-
-validate_dataset:
-  shuffle: False
-  batch_size: 1
-  num_workers: 4
-  datapath:
-    input_dataset_dir: ./dataset_train
-    use_prob: False
-    loader: *loader
-    data_name: *data_name
-    ignore_check: True
-    data_path:
-      shapenet: [
-        [./datalist/validate.txt, 1.0],
       ]

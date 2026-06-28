@@ -12,3 +12,5 @@
 *.zip
 
 wandb
+/val_*/
+/selected_weights/

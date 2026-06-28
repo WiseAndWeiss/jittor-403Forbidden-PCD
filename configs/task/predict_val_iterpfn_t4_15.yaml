@@ -1,0 +1,12 @@
+mode: predict
+debug: False
+load_ckpt: experiments/iterpfn_t4/checkpoint_15.pkl
+components:
+  data: predict_val
+  transform: asdn
+  system: vm
+  model: iterpfn_t4
+writer:
+  __target__: vm
+  save_dir: val_pred_iterpfn_t4_15
+  save_name: denoised

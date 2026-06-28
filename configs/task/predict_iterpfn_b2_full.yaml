@@ -1,0 +1,12 @@
+mode: predict
+debug: False
+load_ckpt: experiments/iterpfn_b2/checkpoint_9.pkl
+components:
+  data: predict
+  transform: asdn
+  system: vm
+  model: iterpfn_b2
+writer:
+  __target__: vm
+  save_dir: results/dataset_test_noisy_iterpfn_b2
+  save_name: denoised
