@@ -1,0 +1,12 @@
+mode: predict
+debug: False
+load_ckpt: experiments/asdn_v2/checkpoint_24.pkl
+components:
+  data: predict_val
+  transform: asdn
+  system: vm
+  model: asdn_v2
+writer:
+  __target__: vm
+  save_dir: val_pred_v2
+  save_name: denoised

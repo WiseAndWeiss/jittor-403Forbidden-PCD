@@ -145,6 +145,8 @@ class AugmentPatch(Augment):
     
     train_cvm_network: bool
     
+    random_t: bool=False
+    
     @classmethod
     def parse(cls, **kwargs) -> 'AugmentPatch':
         cls.check_keys(kwargs)
@@ -173,7 +175,14 @@ class AugmentPatch(Augment):
         pat_B = pc[nn_idx]        # (P, M, 3)
 
         l1, l2 = 0.0, 1.0
-        t = np.zeros((self.num_patches, self.patch_size, 1))
+        # Rectified-flow bridge: sample a random time t in [0,1] per patch so the
+        # network sees points all along the noisy(t=0)->clean(t=1) path. t=0 (the
+        # default) reduces to the original single-step displacement supervision.
+        if self.random_t and asset.sampled_vertices is not None:
+            t_scalar = float(np.random.uniform(0.0, 1.0))
+            t = np.full((self.num_patches, self.patch_size, 1), t_scalar)
+        else:
+            t = np.zeros((self.num_patches, self.patch_size, 1))
         
         pat_t = t * pat_B + (1 - t) * pat_A
         seed_points_t = pc_noisy[seed_idx][:, None, :]

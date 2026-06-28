@@ -27,6 +27,14 @@ class FeatureExtraction(nn.Module):
         self.stride_list = stride_list
         self.L = 4
         self.gamma = 0.396
+        # tercile thresholds on the classify_v2 predicted noise level (see
+        # _assign_n_layers); calibrated to its compressed output range on real
+        # test-noise patches so lambda actually spreads across {2,3,4}.
+        # noise-level terciles for classify_v3 (predicts normalised noise in
+        # [0,1]; training noise 0.005-0.020 -> target 0-1). <0.33 light noise ->
+        # lambda2 (shallow), 0.33-0.67 -> lambda3, >0.67 heavy -> lambda4 (deep).
+        self.lam_lo = 0.33
+        self.lam_hi = 0.67
 
         stride = 1
         stride_idx = 0
@@ -67,20 +75,30 @@ class FeatureExtraction(nn.Module):
         self.classify = classify
 
     def _assign_n_layers(self, rho_list):
-        """Map recoverability factor rho -> stopping layer lambda in {2,...,L}.
-
-        Faithful to the official ASDN formula. The result is clamped to
-        [2, L] so that out-of-range classifier outputs (e.g. an untrained
-        classifier early in training) still land in one of the handled groups
-        instead of dropping/corrupting those samples.
+        """Map the classifier's predicted noise level (in [0,1]) -> stopping
+        layer lambda in {2,3,4}. The classifier (ScaleNet) is now trained to
+        regress the normalised per-patch noise level (0 = clean, 1 = heavy
+        noise). More noise -> denoise deeper; cleaner -> stop earlier and avoid
+        over-smoothing. Terciles of [0,1] give the three groups the encoder/
+        decoder code paths handle.
         """
-        L = self.L
-        gamma = self.gamma
+        # Thresholds are the empirical terciles of this classifier's predicted
+        # noise level on real (test-noise) patches: its output is compressed into
+        # ~[0.87, 0.99] there, so the nominal 1/3, 2/3 cut-offs would send every
+        # patch to lambda=4. Cutting at the p33/p67 of the actual output range
+        # spreads patches across {2,3,4} by their RELATIVE predicted noise.
+        import os as _os
+        lo = float(_os.environ.get('LAM_LO', self.lam_lo))
+        hi = float(_os.environ.get('LAM_HI', self.lam_hi))
         result = []
         for rho in rho_list:
-            rho_val = rho.item() if hasattr(rho, 'item') else float(rho)
-            n = math.ceil(L - (L - 1) * math.log(gamma * rho_val + 1))
-            n = max(2, min(L, n))
+            v = rho.item() if hasattr(rho, 'item') else float(rho)
+            if v < lo:
+                n = 2
+            elif v < hi:
+                n = 3
+            else:
+                n = 4
             result.append(n)
         return result
 
@@ -105,6 +123,18 @@ class FeatureExtraction(nn.Module):
             with jt.no_grad():
                 rho_list, _ = clf(p.reshape(batch_size, num_points, -1), None)
             n_layers = self._assign_n_layers(rho_list)
+            import os as _os
+            if _os.environ.get('LAMBDA_LOG') == '1':
+                import collections as _c
+                if not hasattr(FeatureExtraction, '_lc'):
+                    FeatureExtraction._lc = _c.Counter(); FeatureExtraction._rv = []
+                FeatureExtraction._lc.update(n_layers)
+                FeatureExtraction._rv.extend(rho_list.reshape(-1).numpy().tolist())
+                import numpy as _np; _a = _np.array(FeatureExtraction._rv)
+                print('[LAMBDA] counts=%s pred p10/33/50/67/90=%.3f/%.3f/%.3f/%.3f/%.3f n=%d'
+                      % (dict(sorted(FeatureExtraction._lc.items())),
+                         _np.percentile(_a,10), _np.percentile(_a,33), _np.percentile(_a,50),
+                         _np.percentile(_a,67), _np.percentile(_a,90), _a.size), flush=True)
         else:
             n_layers = [4] * batch_size
 

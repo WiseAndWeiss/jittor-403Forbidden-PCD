@@ -1,0 +1,12 @@
+__target__: ASDNModule
+frame_knn: 32
+num_train_points: 1000
+feat_d_out: 32
+nsample: 16
+stride_list: [4, 3, 2, 1]
+classify_embedding_dim: 256
+predict_patch_size: 1000
+classify_ckpt: experiments/classify_v2/checkpoint_24.pkl
+rep_weight: 0.0
+rep_k: 5
+rep_h_scale: 1.0

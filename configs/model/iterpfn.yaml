@@ -1,0 +1,13 @@
+__target__: IterativePFNModule
+num_iters: 3
+schedule: refine
+loss_type: infocd
+detach_between: true
+feat_d_out: 32
+nsample: 16
+stride_list: [4, 3, 2, 1]
+predict_patch_size: 1000
+predict_seed_k: 5
+predict_seed_k_alpha: 10
+predict_stitch: best
+init_ckpt: experiments/asdn_v2/checkpoint_24.pkl

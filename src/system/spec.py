@@ -169,7 +169,10 @@ class DummySystem():
         assert self.optimizer is not None, "optimizer is None, cannot train"
         self.model.set_predict(False)
         global_step = 0
-        for epoch in range(self.epochs):
+        # START_EPOCH lets a crash-resume wrapper continue checkpoint numbering
+        # (and the schedule) from where a previous run left off.
+        _start_epoch = int(os.environ.get('START_EPOCH', 0))
+        for epoch in range(_start_epoch, self.epochs):
             self.current_epoch = epoch
             self.model.train()
             self.on_train_epoch_start()

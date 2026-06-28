@@ -146,7 +146,15 @@ if __name__ == "__main__":
     
     if load_ckpt is not None and model is not None:
         model.load(load_ckpt)
-    
+        # model.load() overwrites EVERY parameter, including the frozen stage-1
+        # classifier loaded in __init__ from classify_ckpt. Without this re-apply,
+        # a denoiser checkpoint (e.g. asdn/checkpoint_140) silently restores its
+        # OWN (old) classifier, so the freshly trained classify_ckpt is ignored.
+        if hasattr(model, 'set_classifier_weights'):
+            _cck = model.model_config.get('classify_ckpt', None)
+            if _cck:
+                model.set_classifier_weights(_cck)
+
     # get writer
     writer_config = task.get('writer', None)
     

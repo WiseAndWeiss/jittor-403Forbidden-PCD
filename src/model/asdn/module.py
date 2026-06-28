@@ -17,7 +17,9 @@ from .feature import get_knn_idx
 def get_entropy_B(point_clouds):
     """Compute entropy of point cloud distribution via voxelization.
 
-    Matches official implementation exactly.
+    NOTE: no longer used for the stopping-layer target (the voxel-entropy ratio
+    was degenerate on patches — a constant ~1.0). ClassifyModule now regresses the
+    per-patch noise level instead. Kept for reference.
     Args:
         point_clouds: (B, N, 3)
     Returns:
@@ -115,17 +117,22 @@ class ClassifyModule(ModelSpec):
         pc_noisy = batch['pc_noisy']
         pc_clean = batch['pc_clean']
 
-        noisy_centered = pc_noisy - pc_noisy.mean(dim=1, keepdims=True)
-        clean_centered = pc_clean - pc_clean.mean(dim=1, keepdims=True)
-
-        noise_entropy = get_entropy_B(noisy_centered)
-        clean_entropy = get_entropy_B(clean_centered)
-        entropy_ratio = noise_entropy / (clean_entropy + 1e-8)
+        # pc_noisy and pc_clean are point-corresponded (AugmentPatch indexes both
+        # with the same nn_idx and subtracts the same seed), so their difference
+        # is exactly the added noise. Train ScaleNet to estimate the per-patch
+        # noise level -- a well-posed, perfectly discriminative target -- instead
+        # of the degenerate voxel-entropy ratio (which was a constant ~1.0 on
+        # patches, so the classifier learned nothing and stopping was always L=4).
+        # Target is the per-axis noise std normalised by the training noise range
+        # [0.005, 0.020] -> [0, 1]: 0 = clean (shallow), 1 = heavy noise (deep).
+        noise = pc_noisy - pc_clean                                  # (B, N, 3)
+        noise_std = jt.sqrt((noise ** 2).sum(dim=-1).mean(dim=-1) / 3.0)  # (B,)
+        target = ((noise_std - 0.005) / 0.015).clamp(0.0, 1.0)
 
         pred_rho, _ = self.classifier(pc_noisy, None)
         # reshape(-1) instead of squeeze(): with batch_size=1 (validation) squeeze
         # would collapse (1,1)->0-D, which Jittor's reshape rejects.
-        loss = ((pred_rho.reshape(-1) - entropy_ratio.reshape(-1)) ** 2).sum()
+        loss = ((pred_rho.reshape(-1) - target.reshape(-1)) ** 2).sum()
 
         return {'loss': loss, 'mse': loss}
 
@@ -164,7 +171,6 @@ class ASDNModule(ModelSpec):
         cfg = self.model_config
         self.frame_knn = cfg.get('frame_knn', 32)
         self.num_train_points = cfg.get('num_train_points', 1000)
-
         self.feature_nets = FeatureExtraction(
             d_in=0,
             d_out=cfg.get('feat_d_out', 32),
@@ -231,10 +237,8 @@ class ASDNModule(ModelSpec):
 
         pred_pcl = pcl_input + pred_disp
 
-        loss = calc_cd_like_InfoV2(pred_pcl, pcl_clean_centered)
-        loss = loss.mean()
-
-        return {'loss': loss}
+        cd_loss = calc_cd_like_InfoV2(pred_pcl, pcl_clean_centered).mean()
+        return {'loss': cd_loss}
 
     def execute(self, **kwargs) -> Dict:
         return self.training_step(**kwargs)
@@ -278,16 +282,17 @@ class ASDNModule(ModelSpec):
 
         res = []
         for i, pc_noisy in enumerate(pc_noisy_batch):
-            pc_denoised = patch_based_denoise_asdn(
+            den = patch_based_denoise_asdn(
                 model=self,
                 pcl_noisy=pc_noisy,
                 patch_size=patch_size,
                 seed_k=self.model_config.get('predict_seed_k', 5),
                 seed_k_alpha=self.model_config.get('predict_seed_k_alpha', 10),
+                stitch=self.model_config.get('predict_stitch', 'best'),
             )
-
-            if isinstance(pc_denoised, jt.Var):
-                pc_denoised = pc_denoised.numpy()
+            if not isinstance(den, jt.Var):
+                den = jt.array(den)
+            pc_denoised = den.numpy()
 
             pc_denoised = self._smooth_outliers(pc_denoised)
 
@@ -319,8 +324,15 @@ class ASDNModule(ModelSpec):
         return points
 
 
-def patch_based_denoise_asdn(model, pcl_noisy, patch_size=1000, seed_k=6, seed_k_alpha=1):
-    """Patch-based denoising with patch stitching, matching official implementation."""
+def patch_based_denoise_asdn(model, pcl_noisy, patch_size=1000, seed_k=6, seed_k_alpha=1,
+                             stitch='best'):
+    """Patch-based denoising with patch stitching, matching official implementation.
+
+    stitch='best': each point takes the denoised coord from its highest-weight
+        (closest-seed) patch.
+    stitch='average': each point is the weight-averaged denoised coord over ALL
+        patches covering it (~5x overlap), which reduces per-estimate variance.
+    """
     assert pcl_noisy.ndim == 2
     N, d = pcl_noisy.shape
     pcl_noisy_b = pcl_noisy.unsqueeze(0)
@@ -365,9 +377,24 @@ def patch_based_denoise_asdn(model, pcl_noisy, patch_size=1000, seed_k=6, seed_k
     # covered by any patch fall back to their noisy coordinate. Equivalent to the
     # official per-point loop but without N host syncs.
     flat_global = point_idxs.reshape(-1)                          # (P*K,)
+    flat_denoised = patches_denoised.reshape(-1, 3)               # (P*K, 3)
+
+    if stitch == 'average':
+        # Weight-average every patch estimate covering each point (variance
+        # reduction over the ~seed_k-fold overlap). Weight = exp(-patch_dist),
+        # same as the 'best' selection metric.
+        occ_w = jt.exp(-patch_dists).reshape(-1, 1)               # (P*K, 1)
+        idx3 = flat_global.reshape(-1, 1).broadcast((flat_global.shape[0], 3))
+        num = jt.zeros((N, 3)).scatter_(0, idx3, occ_w.broadcast((flat_global.shape[0], 3)) * flat_denoised, reduce='add')
+        den = jt.zeros((N, 1)).scatter_(0, flat_global.reshape(-1, 1), occ_w, reduce='add')
+        pcl_out = pcl_noisy_b[0].clone()                         # fallback: noisy
+        covered = (den[:, 0] > 0)
+        avg = num / (den + 1e-12)
+        pcl_out[covered] = avg[covered]
+        return pcl_out
+
     flat_patch = jt.arange(num_patches).reshape(num_patches, 1)
     flat_patch = flat_patch.broadcast((num_patches, patch_size)).reshape(-1)
-    flat_denoised = patches_denoised.reshape(-1, 3)               # (P*K, 3)
     chosen = best_weights_idx[flat_global]                        # best patch per occurrence
     keep = (chosen == flat_patch)
     pcl_out = pcl_noisy_b[0].clone()                              # fallback: noisy
